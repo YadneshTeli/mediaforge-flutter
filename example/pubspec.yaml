@@ -1,0 +1,13 @@
+name: mediaforge_flutter_example
+description: Example application demonstrating mediaforge_flutter SDK features.
+publish_to: 'none'
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  mediaforge_flutter:
+    path: ../
+
+dev_dependencies:
+  lints: ^5.0.0
