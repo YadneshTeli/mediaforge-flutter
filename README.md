@@ -302,5 +302,6 @@ Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 - [Website](https://mediaforge.tech)
 - [Documentation](https://mediaforge.tech/docs/)
+- [GitHub](https://github.com/YadneshTeli/mediaforge-flutter)
 - [Support](mailto:support@mediaforge.tech)
 - [pub.dev](https://pub.dev/packages/mediaforge_flutter)
