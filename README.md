@@ -1,5 +1,9 @@
 # mediaforge_flutter
 
+[![pub package](https://img.shields.io/pub/v/mediaforge_flutter.svg)](https://pub.dev/packages/mediaforge_flutter)
+[![pub points](https://img.shields.io/pub/points/mediaforge_flutter?color=2E8B57)](https://pub.dev/packages/mediaforge_flutter/score)
+[![license](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
+
 Privacy-first media processing and CDN upload for Flutter and Dart.
 
 Strip EXIF metadata on-device or in cloud, compress, resize, convert formats — then upload to MediaForge CDN. **Your server never sees the raw file.**
