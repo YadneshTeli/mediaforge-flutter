@@ -2,7 +2,7 @@ name: mediaforge_flutter
 description: >-
   Privacy-first media processing and CDN upload for Flutter.
   Strip EXIF metadata on-device, compress, resize, and upload to MediaForge CDN.
-version: 0.2.1
+version: 0.2.2
 homepage: https://mediaforge.tech
 repository: https://github.com/YadneshTeli/mediaforge-flutter
 documentation: https://mediaforge.tech/docs/

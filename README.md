@@ -29,7 +29,7 @@ Strip EXIF metadata on-device or in cloud, compress, resize, convert formats —
 
 ```yaml
 dependencies:
-  mediaforge_flutter: ^0.2.1
+  mediaforge_flutter: ^0.2.2
 ```
 
 Or run:

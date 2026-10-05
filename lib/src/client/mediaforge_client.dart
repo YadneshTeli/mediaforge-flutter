@@ -63,7 +63,7 @@ class MediaForgeClient {
   /// Default headers sent with requests.
   Map<String, String> get _headers => {
         'X-API-Key': apiKey,
-        'User-Agent': 'mediaforge-flutter/0.2.1',
+        'User-Agent': 'mediaforge-flutter/0.2.2',
       };
 
   // ---------------------------------------------------------------------------

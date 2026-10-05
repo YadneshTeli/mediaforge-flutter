@@ -1,3 +1,8 @@
+## 0.2.2
+
+- Added official public GitHub repository link
+- Added pub.dev version, points, and license badges to documentation
+
 ## 0.2.1
 
 - Added direct `http_parser` dependency for full lower-bound dependency compatibility
