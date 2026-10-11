@@ -42,18 +42,20 @@ library;
 // Client & Configuration
 export 'src/client/mediaforge_client.dart';
 export 'src/config.dart';
-
 // Exceptions
 export 'src/exceptions/auth_exception.dart';
 export 'src/exceptions/mediaforge_exception.dart';
 export 'src/exceptions/network_exception.dart';
 export 'src/exceptions/plan_limit_exception.dart';
 export 'src/exceptions/processing_exception.dart';
-
+// File I/O
+export 'src/io/file_support.dart';
+export 'src/io/local_file_support.dart';
 // Main entry point
 export 'src/mediaforge.dart';
-
+export 'src/mediaforge_local.dart';
 // Models
+export 'src/models/batch_delete_result.dart';
 export 'src/models/exif_data.dart';
 export 'src/models/file_list_result.dart';
 export 'src/models/image_format.dart';
@@ -63,17 +65,15 @@ export 'src/models/mediaforge_usage.dart';
 export 'src/models/processing_options.dart';
 export 'src/models/resize_mode.dart';
 export 'src/models/upload_result.dart';
-
 // Processing
 export 'src/processing/exif_reader.dart';
 export 'src/processing/exif_stripper.dart';
 export 'src/processing/image_processor.dart';
 export 'src/processing/processing_pipeline.dart';
-
 // Upload
+export 'src/upload/upload_phase.dart';
 export 'src/upload/upload_progress.dart';
 export 'src/upload/uploader.dart';
-
 // Utilities
 export 'src/utils/byte_utils.dart';
 export 'src/utils/mime_type.dart';

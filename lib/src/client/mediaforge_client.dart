@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -10,13 +11,21 @@ import '../exceptions/mediaforge_exception.dart';
 import '../exceptions/network_exception.dart';
 import '../exceptions/plan_limit_exception.dart';
 import '../exceptions/processing_exception.dart';
+import '../models/batch_delete_result.dart';
 import '../models/file_list_result.dart';
 import '../models/mediaforge_file.dart';
 import '../models/mediaforge_health.dart';
 import '../models/mediaforge_usage.dart';
+import '../upload/upload_phase.dart';
+import '../utils/byte_utils.dart';
 import '../utils/mime_type.dart';
 
 /// Progress callback reporting upload completion ratio from 0.0 to 1.0.
+///
+/// Since 0.3.0 this callback only reports `1.0` once the **server has
+/// confirmed** the upload. While the request is in flight, values are capped
+/// at [MediaForgeClient.inFlightProgressCeiling] (0.99). Use
+/// [UploadProgressCallback] (`onProgressEvent`) for phase-aware progress.
 typedef ProgressCallback = void Function(double progress);
 
 /// Client for communicating with the MediaForge Developer REST API.
@@ -24,14 +33,48 @@ typedef ProgressCallback = void Function(double progress);
 /// Handles authentication, multipart streaming, progress tracking,
 /// quota telemetry, and remote asset management.
 class MediaForgeClient {
+  /// SDK version reported in the `User-Agent` header.
+  static const String sdkVersion = '0.3.0';
+
+  /// Default timeout for lightweight requests (health, usage, file listing).
+  static const Duration defaultTimeout = Duration(seconds: 30);
+
+  /// Default timeout for heavy multipart requests (upload, cloud strip).
+  ///
+  /// Covers transfer over slow mobile links plus edge sanitization and the
+  /// Cloudflare R2 commit.
+  static const Duration defaultUploadTimeout = Duration(seconds: 120);
+
+  /// Default client-side ceiling for upload payloads (100 MB).
+  ///
+  /// Matches the MediaForge API's maximum direct-upload size. Lower it via
+  /// the `maxUploadBytes` constructor argument to match your plan or reverse
+  /// proxy limits, or pass `null` to disable the pre-flight check.
+  static const int defaultMaxUploadBytes = 100 * 1024 * 1024;
+
+  /// Maximum value reported to a legacy [ProgressCallback] before the server
+  /// confirms the upload.
+  static const double inFlightProgressCeiling = 0.99;
+
+  /// Maximum length of a non-JSON error body surfaced in exception messages.
+  static const int _maxErrorMessageLength = 300;
+
   /// The Developer API key (`mf_live_...` or `mf_test_...`).
   final String apiKey;
 
   /// Root URL of the MediaForge API.
   final String baseUrl;
 
-  /// Request timeout duration.
+  /// Timeout for lightweight requests (health, usage, file management).
   final Duration timeout;
+
+  /// Timeout for heavy multipart requests ([uploadToCdn], [uploadStreamToCdn],
+  /// [stripCloud]). Can be overridden per call.
+  final Duration uploadTimeout;
+
+  /// Client-side maximum payload size in bytes, checked **before** any data
+  /// is sent. `null` disables the check.
+  final int? maxUploadBytes;
 
   final http.Client _httpClient;
   final bool _ownsClient;
@@ -41,12 +84,16 @@ class MediaForgeClient {
   /// Parameters:
   /// - [apiKey]: Developer API key
   /// - [baseUrl]: API base URL (defaults to `https://api.mediaforge.tech`)
-  /// - [timeout]: Request timeout (defaults to 30 seconds)
+  /// - [timeout]: Timeout for lightweight requests (defaults to 30 seconds)
+  /// - [uploadTimeout]: Timeout for uploads and cloud strip (defaults to 120 seconds)
+  /// - [maxUploadBytes]: Client-side payload ceiling (defaults to 100 MB, `null` disables)
   /// - [httpClient]: Optional custom [http.Client] (useful for testing or proxying)
   MediaForgeClient({
     required this.apiKey,
     String baseUrl = 'https://api.mediaforge.tech',
-    this.timeout = const Duration(seconds: 30),
+    this.timeout = defaultTimeout,
+    this.uploadTimeout = defaultUploadTimeout,
+    this.maxUploadBytes = defaultMaxUploadBytes,
     http.Client? httpClient,
   })  : baseUrl = _normalizeBaseUrl(baseUrl),
         _httpClient = httpClient ?? http.Client(),
@@ -63,7 +110,7 @@ class MediaForgeClient {
   /// Default headers sent with requests.
   Map<String, String> get _headers => {
         'X-API-Key': apiKey,
-        'User-Agent': 'mediaforge-flutter/0.2.2',
+        'User-Agent': 'mediaforge-flutter/$sdkVersion',
       };
 
   // ---------------------------------------------------------------------------
@@ -85,8 +132,9 @@ class MediaForgeClient {
           return MediaForgeHealth.fromJson(data);
         } catch (parseError) {
           if (response.statusCode == 200) {
-            throw NetworkException(
-              'Health endpoint returned invalid JSON: $parseError',
+            throw const NetworkException(
+              'Health endpoint returned an invalid (non-JSON) response.',
+              statusCode: 200,
               code: 'health_parse_error',
             );
           }
@@ -115,17 +163,21 @@ class MediaForgeClient {
   ///
   /// Immediately streams back the clean binary bytes without storing the file on CDN.
   /// Available across all plans (Spark, Forge, Forge+).
+  ///
+  /// [timeout] overrides [uploadTimeout] for this call.
+  ///
+  /// Throws [PlanLimitException] (code `client_payload_too_large`) before
+  /// sending anything if [bytes] exceed [maxUploadBytes].
   Future<Uint8List> stripCloud(
     Uint8List bytes, {
     String? filename,
+    Duration? timeout,
   }) async {
     final uri = Uri.parse('$baseUrl/v1/developer/strip');
+    _ensureWithinUploadLimit(bytes.lengthInBytes);
     final actualFilename = filename ?? _inferFilename(bytes, defaultName: 'media');
 
     try {
-      final request = http.MultipartRequest('POST', uri);
-      request.headers.addAll(_headers);
-
       final mimeType = MimeType.fromBytes(bytes) ?? 'application/octet-stream';
       final multipartFile = http.MultipartFile.fromBytes(
         'file',
@@ -133,12 +185,12 @@ class MediaForgeClient {
         filename: actualFilename,
         contentType: MediaType.parse(mimeType),
       );
-      request.files.add(multipartFile);
 
-      final streamedResponse =
-          await _httpClient.send(request).timeout(timeout);
-      final response =
-          await http.Response.fromStream(streamedResponse).timeout(timeout);
+      final response = await _sendMultipart(
+        uri: uri,
+        file: multipartFile,
+        timeout: timeout ?? uploadTimeout,
+      );
 
       if (response.statusCode == 200) {
         return response.bodyBytes;
@@ -169,53 +221,130 @@ class MediaForgeClient {
   /// - [bytes]: Raw image or video bytes to process and upload
   /// - [filename]: Desired filename (with extension, e.g. 'avatar.png')
   /// - [folder]: Optional folder path on CDN
-  /// - [onProgress]: Optional callback invoked with upload progress (0.0 to 1.0)
+  /// - [onProgress]: Optional callback with progress (0.0 to 1.0). Reaches
+  ///   `1.0` only after the server confirms the upload.
+  /// - [onProgressEvent]: Optional phase-aware progress callback
+  /// - [timeout]: Overrides [uploadTimeout] for this call
   ///
   /// Returns a [MediaForgeFile] containing the public edge CDN URL and file details.
+  ///
+  /// Throws [PlanLimitException] (code `client_payload_too_large`) before
+  /// sending anything if [bytes] exceed [maxUploadBytes].
   Future<MediaForgeFile> uploadToCdn(
     Uint8List bytes, {
     String? filename,
     String? folder,
     ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
   }) async {
-    final uri = Uri.parse('$baseUrl/v1/developer/upload');
+    _ensureWithinUploadLimit(bytes.lengthInBytes);
     final actualFilename = filename ?? _inferFilename(bytes, defaultName: 'upload');
     final mimeType = MimeType.fromBytes(bytes) ?? 'application/octet-stream';
 
-    try {
-      final request = http.MultipartRequest('POST', uri);
-      request.headers.addAll(_headers);
-
-      final multipartFile = http.MultipartFile.fromBytes(
+    return _uploadMultipart(
+      () => http.MultipartFile.fromBytes(
         'file',
         bytes,
         filename: actualFilename,
         contentType: MediaType.parse(mimeType),
+      ),
+      folder: folder,
+      onProgress: onProgress,
+      onProgressEvent: onProgressEvent,
+      timeout: timeout,
+    );
+  }
+
+  /// Uploads media from a byte [stream] to the CDN without buffering the
+  /// whole file in memory.
+  ///
+  /// Use this for large camera photos and videos to avoid Out-Of-Memory
+  /// crashes, e.g. with `File.openRead()` or `XFile.openRead()`:
+  ///
+  /// ```dart
+  /// final file = await picker.pickImage(source: ImageSource.camera);
+  /// final uploaded = await client.uploadStreamToCdn(
+  ///   file!.openRead(),
+  ///   length: await file.length(),
+  ///   filename: file.name,
+  /// );
+  /// ```
+  ///
+  /// Parameters:
+  /// - [stream]: The file content. It is listened to exactly once.
+  /// - [length]: Exact number of bytes [stream] will emit (required for multipart).
+  /// - [filename]: Filename with extension (used to infer the content type).
+  /// - [contentType]: Optional explicit MIME type; inferred from [filename] if omitted.
+  /// - [folder], [onProgress], [onProgressEvent], [timeout]: As in [uploadToCdn].
+  ///
+  /// Throws [PlanLimitException] (code `client_payload_too_large`) before
+  /// listening to [stream] if [length] exceeds [maxUploadBytes].
+  Future<MediaForgeFile> uploadStreamToCdn(
+    Stream<List<int>> stream, {
+    required int length,
+    required String filename,
+    String? contentType,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) async {
+    if (length < 0) {
+      throw ArgumentError.value(length, 'length', 'must be non-negative');
+    }
+    _ensureWithinUploadLimit(length);
+
+    final mimeType = contentType ??
+        MimeType.fromExtension(_extensionOf(filename)) ??
+        'application/octet-stream';
+
+    return _uploadMultipart(
+      () => http.MultipartFile(
+        'file',
+        stream,
+        length,
+        filename: filename,
+        contentType: MediaType.parse(mimeType),
+      ),
+      folder: folder,
+      onProgress: onProgress,
+      onProgressEvent: onProgressEvent,
+      timeout: timeout,
+    );
+  }
+
+  Future<MediaForgeFile> _uploadMultipart(
+    http.MultipartFile Function() buildFile, {
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) async {
+    final uri = Uri.parse('$baseUrl/v1/developer/upload');
+    final reporter = (onProgress != null || onProgressEvent != null)
+        ? _ProgressReporter(onProgress, onProgressEvent)
+        : null;
+
+    try {
+      final response = await _sendMultipart(
+        uri: uri,
+        file: buildFile(),
+        fields: {
+          if (folder != null && folder.isNotEmpty) 'folder': folder,
+        },
+        timeout: timeout ?? uploadTimeout,
+        reporter: reporter,
       );
-      request.files.add(multipartFile);
-
-      if (folder != null && folder.isNotEmpty) {
-        request.fields['folder'] = folder;
-      }
-
-      http.StreamedResponse streamedResponse;
-      if (onProgress != null) {
-        final trackedRequest = _TrackedMultipartRequest(request, onProgress);
-        streamedResponse =
-            await _httpClient.send(trackedRequest).timeout(timeout);
-      } else {
-        streamedResponse = await _httpClient.send(request).timeout(timeout);
-      }
-
-      final response =
-          await http.Response.fromStream(streamedResponse).timeout(timeout);
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final fileMap = (data['file'] is Map<String, dynamic>)
             ? data['file'] as Map<String, dynamic>
             : data;
-        return MediaForgeFile.fromJson(fileMap);
+        final file = MediaForgeFile.fromJson(fileMap);
+        reporter?.completed();
+        return file;
       }
 
       _handleErrorResponse(response);
@@ -229,6 +358,31 @@ class MediaForgeClient {
         code: 'upload_failed',
       );
     }
+  }
+
+  /// Sends a multipart POST, applying a single overall [timeout] covering
+  /// both the request transfer and reading the response.
+  Future<http.Response> _sendMultipart({
+    required Uri uri,
+    required http.MultipartFile file,
+    Map<String, String> fields = const {},
+    required Duration timeout,
+    _ProgressReporter? reporter,
+  }) {
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers)
+      ..fields.addAll(fields)
+      ..files.add(file);
+
+    final http.BaseRequest toSend =
+        reporter == null ? request : _TrackedMultipartRequest(request, reporter);
+
+    Future<http.Response> exchange() async {
+      final streamed = await _httpClient.send(toSend);
+      return http.Response.fromStream(streamed);
+    }
+
+    return exchange().timeout(timeout);
   }
 
   // ---------------------------------------------------------------------------
@@ -312,7 +466,7 @@ class MediaForgeClient {
 
   /// Retrieves metadata and CDN URL for a specific file by its [fileId].
   Future<MediaForgeFile> getFile(String fileId) async {
-    final uri = Uri.parse('$baseUrl/v1/developer/files/$fileId');
+    final uri = _fileUri(fileId);
     try {
       final response =
           await _httpClient.get(uri, headers: _headers).timeout(timeout);
@@ -340,7 +494,7 @@ class MediaForgeClient {
 
   /// Deletes a file from Cloudflare R2 CDN and releases storage quota.
   Future<void> deleteFile(String fileId) async {
-    final uri = Uri.parse('$baseUrl/v1/developer/files/$fileId');
+    final uri = _fileUri(fileId);
     try {
       final response =
           await _httpClient.delete(uri, headers: _headers).timeout(timeout);
@@ -362,6 +516,62 @@ class MediaForgeClient {
     }
   }
 
+  /// Deletes multiple files, running up to [concurrency] requests in parallel.
+  ///
+  /// Duplicate IDs are removed. Each file is deleted independently, so the
+  /// returned [BatchDeleteResult] reports which IDs succeeded and which
+  /// failed (with the error for each) instead of aborting on the first failure.
+  ///
+  /// [concurrency] defaults to 4 to stay well within API rate limits.
+  ///
+  /// ```dart
+  /// final result = await client.deleteFiles(['f1', 'f2', 'f3']);
+  /// if (result.hasFailures) {
+  ///   result.failed.forEach((id, error) => print('$id: ${error.message}'));
+  /// }
+  /// ```
+  Future<BatchDeleteResult> deleteFiles(
+    Iterable<String> fileIds, {
+    int concurrency = 4,
+  }) async {
+    if (concurrency < 1) {
+      throw ArgumentError.value(concurrency, 'concurrency', 'must be >= 1');
+    }
+
+    final ids = fileIds.toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return const BatchDeleteResult(deleted: [], failed: {});
+    }
+
+    final deletedIds = <String>{};
+    final failed = <String, MediaForgeException>{};
+    var nextIndex = 0;
+
+    Future<void> worker() async {
+      while (nextIndex < ids.length) {
+        final id = ids[nextIndex++];
+        try {
+          await deleteFile(id);
+          deletedIds.add(id);
+        } on MediaForgeException catch (e) {
+          failed[id] = e;
+        }
+      }
+    }
+
+    await Future.wait(
+      List.generate(math.min(concurrency, ids.length), (_) => worker()),
+    );
+
+    return BatchDeleteResult(
+      deleted: List.unmodifiable(ids.where(deletedIds.contains)),
+      failed: Map.unmodifiable({
+        for (final id in ids)
+          if (failed.containsKey(id)) id: failed[id]!,
+      }),
+    );
+  }
+
   /// Closes the HTTP client if owned by this instance.
   void close() {
     if (_ownsClient) {
@@ -372,6 +582,31 @@ class MediaForgeClient {
   // ---------------------------------------------------------------------------
   // Internal Helpers & Error Handling
   // ---------------------------------------------------------------------------
+
+  Uri _fileUri(String fileId) => Uri.parse(
+        '$baseUrl/v1/developer/files/${Uri.encodeComponent(fileId)}',
+      );
+
+  /// Throws before any network I/O if [length] exceeds [maxUploadBytes].
+  void _ensureWithinUploadLimit(int length) {
+    final limit = maxUploadBytes;
+    if (limit == null || length <= limit) return;
+
+    throw PlanLimitException(
+      'Payload size (${ByteUtils.formatFileSize(length)}) exceeds the maximum '
+      'upload size of ${ByteUtils.formatFileSize(limit)}. '
+      'Compress or resize the file before uploading.',
+      limitName: 'file_size',
+      currentUsage: length,
+      maxAllowed: limit,
+      code: 'client_payload_too_large',
+    );
+  }
+
+  static String _extensionOf(String filename) {
+    final dot = filename.lastIndexOf('.');
+    return (dot >= 0 && dot < filename.length - 1) ? filename.substring(dot + 1) : '';
+  }
 
   static String _inferFilename(Uint8List bytes, {required String defaultName}) {
     final mime = MimeType.fromBytes(bytes);
@@ -386,32 +621,89 @@ class MediaForgeClient {
     return '$defaultName$ext';
   }
 
-  Never _handleErrorResponse(http.Response response) {
-    String message = 'Unexpected error occurred';
-    String? apiCode;
+  /// Decodes the response body without throwing on malformed encodings.
+  static String _safeBody(http.Response response) {
     try {
-      final data = jsonDecode(response.body);
-      if (data is Map) {
-        if (data['error'] != null) {
-          message = data['error'].toString();
-        } else if (data['message'] != null) {
-          message = data['message'].toString();
-        }
-        if (data['code'] != null) {
-          apiCode = data['code'].toString();
-        }
-      }
+      return response.body;
     } catch (_) {
-      if (response.body.isNotEmpty) {
-        message = response.body;
+      return utf8.decode(response.bodyBytes, allowMalformed: true);
+    }
+  }
+
+  /// Whether [body] is an HTML/XML page (typically from a reverse proxy such
+  /// as Nginx or Cloudflare) rather than a MediaForge JSON error.
+  static bool _isMarkupResponse(http.Response response, String body) {
+    final contentType = (response.headers['content-type'] ?? '').toLowerCase();
+    if (contentType.contains('text/html') ||
+        contentType.contains('application/xhtml') ||
+        contentType.contains('text/xml')) {
+      return true;
+    }
+    return body.trimLeft().startsWith('<');
+  }
+
+  /// A safe, human-readable message for proxy/edge responses whose raw body
+  /// must never reach end users (it may contain HTML and injected scripts).
+  static String _edgeMessageFor(int statusCode) => switch (statusCode) {
+        400 => 'The MediaForge edge rejected the request as malformed (HTTP 400).',
+        401 => 'The request was not authorized by the MediaForge edge (HTTP 401).',
+        403 => 'The request was blocked by the MediaForge edge network (HTTP 403).',
+        404 => 'The requested MediaForge endpoint was not found (HTTP 404).',
+        408 => 'The MediaForge edge timed out waiting for the request (HTTP 408).',
+        413 => 'Payload exceeds the edge upload limit (HTTP 413). '
+            'Compress or resize the file before uploading.',
+        429 => 'Too many requests to the MediaForge edge (HTTP 429). '
+            'Slow down and try again.',
+        500 => 'MediaForge edge gateway encountered an internal error (HTTP 500).',
+        502 => 'MediaForge edge gateway is temporarily unavailable (HTTP 502 Bad Gateway).',
+        503 => 'MediaForge service is temporarily unavailable (HTTP 503). Try again shortly.',
+        504 => 'MediaForge edge gateway timed out processing the payload (HTTP 504).',
+        _ => 'MediaForge API returned an unexpected response (HTTP $statusCode).',
+      };
+
+  /// Collapses whitespace and truncates plain-text bodies for messages.
+  static String _sanitizePlainText(String body) {
+    final collapsed = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (collapsed.length <= _maxErrorMessageLength) return collapsed;
+    return '${collapsed.substring(0, _maxErrorMessageLength)}…';
+  }
+
+  Never _handleErrorResponse(http.Response response) {
+    final code = response.statusCode;
+    final body = _safeBody(response);
+    final isEdgeMarkup = _isMarkupResponse(response, body);
+
+    String message = 'Unexpected error occurred (HTTP $code).';
+    String? apiCode;
+
+    if (isEdgeMarkup) {
+      // Never surface raw proxy HTML (Nginx/Cloudflare pages, beacon scripts).
+      message = _edgeMessageFor(code);
+    } else if (body.trim().isNotEmpty) {
+      try {
+        final data = jsonDecode(body);
+        if (data is Map) {
+          final rawMessage = data['error'] ?? data['message'];
+          if (rawMessage != null) {
+            message = rawMessage.toString();
+          }
+          if (data['code'] != null) {
+            apiCode = data['code'].toString();
+          }
+        }
+      } catch (_) {
+        message = _sanitizePlainText(body);
       }
     }
 
-    final code = response.statusCode;
     if (code == 401) {
       throw AuthException(message, code: 'unauthorized');
     }
     if (code == 403) {
+      if (isEdgeMarkup) {
+        // An HTML 403 comes from the edge/WAF, not from MediaForge plan checks.
+        throw NetworkException(message, statusCode: 403, code: 'edge_forbidden');
+      }
       if (apiCode == 'bandwidth_exceeded') {
         throw PlanLimitException(
           message,
@@ -449,16 +741,82 @@ class MediaForgeClient {
       throw NetworkException.serverError(code, message);
     }
 
-    throw MediaForgeException(message, code: 'http_$code');
+    throw MediaForgeException(message, code: apiCode ?? 'http_$code');
   }
 }
 
-/// Helper wrapper that wraps an [http.MultipartRequest] to track byte progress.
-class _TrackedMultipartRequest extends http.BaseRequest {
-  final http.MultipartRequest _original;
-  final ProgressCallback _onProgress;
+/// Translates raw byte counts into phase-aware progress notifications.
+class _ProgressReporter {
+  final ProgressCallback? _onProgress;
+  final UploadProgressCallback? _onProgressEvent;
 
-  _TrackedMultipartRequest(this._original, this._onProgress)
+  int _totalBytes = 0;
+  int _bytesSent = 0;
+  double _lastLegacyValue = -1;
+
+  _ProgressReporter(this._onProgress, this._onProgressEvent);
+
+  void start(int totalBytes) {
+    _totalBytes = totalBytes > 0 ? totalBytes : 0;
+    _bytesSent = 0;
+    _emit(UploadPhase.buffering);
+  }
+
+  void buffering(int bytesSent) {
+    _bytesSent = bytesSent;
+    _emit(UploadPhase.buffering);
+  }
+
+  void edgeProcessing(int bytesSent) {
+    _bytesSent = bytesSent;
+    _emit(UploadPhase.edgeProcessing);
+  }
+
+  void completed() {
+    if (_totalBytes > 0) _bytesSent = _totalBytes;
+    _emit(UploadPhase.completed);
+  }
+
+  void _emit(UploadPhase phase) {
+    final ratio = _totalBytes > 0
+        ? (_bytesSent / _totalBytes).clamp(0.0, 1.0).toDouble()
+        : (phase == UploadPhase.buffering ? 0.0 : 1.0);
+
+    _onProgressEvent?.call(UploadProgressEvent(
+      progress: ratio,
+      phase: phase,
+      bytesSent: _bytesSent,
+      totalBytes: _totalBytes,
+    ));
+
+    final legacy = _onProgress;
+    if (legacy != null) {
+      final value = phase == UploadPhase.completed
+          ? 1.0
+          : math.min(ratio, MediaForgeClient.inFlightProgressCeiling);
+      // Avoid flooding legacy listeners with duplicate values.
+      if (value != _lastLegacyValue) {
+        _lastLegacyValue = value;
+        legacy(value);
+      }
+    }
+  }
+}
+
+/// Wraps an [http.MultipartRequest] to report byte-level progress.
+///
+/// The body is re-chunked into [chunkSize] pieces and emitted from an
+/// `async*` generator so that transport backpressure (socket buffer full)
+/// pauses emission. Without this, `MultipartFile.fromBytes` yields the whole
+/// file as a single chunk and progress jumps from 0% to 100% instantly.
+class _TrackedMultipartRequest extends http.BaseRequest {
+  /// Size of each emitted body chunk.
+  static const int chunkSize = 64 * 1024;
+
+  final http.MultipartRequest _original;
+  final _ProgressReporter _reporter;
+
+  _TrackedMultipartRequest(this._original, this._reporter)
       : super(_original.method, _original.url);
 
   @override
@@ -471,31 +829,31 @@ class _TrackedMultipartRequest extends http.BaseRequest {
     // Copy headers AFTER finalize so the boundary-bearing Content-Type is included
     headers.addAll(_original.headers);
     super.finalize();
-    final totalLength = contentLength;
 
-    if (totalLength <= 0) {
-      return stream;
-    }
+    _reporter.start(contentLength);
+    return http.ByteStream(_track(stream));
+  }
 
+  Stream<List<int>> _track(Stream<List<int>> source) async* {
     var sent = 0;
-    final controller = StreamController<List<int>>(sync: true);
-
-    stream.listen(
-      (chunk) {
+    await for (final chunk in source) {
+      if (chunk.length <= chunkSize) {
+        yield chunk;
         sent += chunk.length;
-        _onProgress((sent / totalLength).clamp(0.0, 1.0).toDouble());
-        controller.add(chunk);
-      },
-      onDone: () {
-        _onProgress(1.0);
-        controller.close();
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        controller.addError(error, stackTrace);
-      },
-      cancelOnError: true,
-    );
-
-    return http.ByteStream(controller.stream);
+        _reporter.buffering(sent);
+        continue;
+      }
+      for (var offset = 0; offset < chunk.length; offset += chunkSize) {
+        final end = math.min(offset + chunkSize, chunk.length);
+        yield chunk is Uint8List
+            ? Uint8List.sublistView(chunk, offset, end)
+            : chunk.sublist(offset, end);
+        sent += end - offset;
+        _reporter.buffering(sent);
+      }
+    }
+    // Every byte has been handed to the transport; the server is now
+    // receiving/processing. Report honestly instead of claiming 100%.
+    _reporter.edgeProcessing(sent);
   }
 }

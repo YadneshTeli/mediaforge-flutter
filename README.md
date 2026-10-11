@@ -29,7 +29,7 @@ Strip EXIF metadata on-device or in cloud, compress, resize, convert formats —
 
 ```yaml
 dependencies:
-  mediaforge_flutter: ^0.2.2
+  mediaforge_flutter: ^0.3.0
 ```
 
 Or run:
@@ -105,9 +105,10 @@ final processed = await MediaForge.process(imageBytes, ProcessingOptions(
 > container chunk removal, no re-encode) — but pure-Dart WebP *encoding* is not
 > available. For WebP output, use cloud processing.
 
-### Processing Pipeline (Chainable)
+### Processing Pipeline (Chainable & Background Isolates)
 
 ```dart
+// Chain processing steps (automatically runs in background isolate for images >500KB)
 final result = await MediaForge.pipeline(imageBytes)
   .stripMetadata()
   .resize(width: 800, height: 600, mode: ResizeMode.fit)
@@ -123,16 +124,70 @@ print('Dimensions: ${result.width}x${result.height}');
 final processedBytes = result.bytes;
 ```
 
+#### Fluent Pipeline-to-Upload Chaining (v0.3.0)
+
+Chain directly from processing into a CDN upload in a single statement:
+
+```dart
+final uploaded = await MediaForge.pipeline(rawBytes)
+  .stripMetadata()
+  .compress(quality: 80)
+  .upload(filename: 'clean.jpg');
+
+print('CDN URL: ${uploaded.cdnUrl}');
+```
+
+### Direct File & Stream Support (OOM Prevention)
+
+Process and stream camera images without loading the entire 20MB–50MB file into memory:
+
+```dart
+// Stream directly from a File or XFile
+await MediaForge.readMetadataFile(file);
+await MediaForge.stripMetadataFile(file, destinationFile: cleanFile);
+final uploaded = await MediaForge.uploadFile(file);
+
+// Or stream arbitrary chunks
+final streamed = await MediaForge.uploadStream(
+  file.openRead(),
+  length: await file.length(),
+  filename: 'camera.jpg',
+);
+```
+
+### Strict Offline Privacy (`MediaForge.local` & `local.dart`)
+
+For strict privacy audits and zero network permissions, use the explicit `MediaForge.local` namespace or import `package:mediaforge_flutter/local.dart` (which contains zero HTTP dependencies):
+
+```dart
+import 'package:mediaforge_flutter/local.dart';
+
+// In-memory operations:
+final metadata = await MediaForgeLocal.readMetadata(bytes);
+final clean = await MediaForgeLocal.stripMetadata(bytes);
+
+// On-device file operations (bounded memory & safe temp-write verification):
+final fileMeta = await LocalFileSupport.readMetadataFile(file);
+final cleanFile = await LocalFileSupport.stripMetadataFile(file);
+```
+
+> **Safety & Bounded Memory:** `stripMetadataFile` enforces a 50MB ceiling (`LocalFileSupport.maxStripFileSizeBytes`) to protect low-memory devices, and writes via verified temporary files so original source files are preserved intact if writing fails.
+
 ---
 
-## Developer Cloud APIs & CDN Upload (v0.2.0+)
+## Developer Cloud APIs & CDN Upload (v0.3.0+)
 
 Cloud capabilities require an API key (`mf_live_...` or `mf_test_...`) from your [MediaForge Dashboard](https://mediaforge.tech/dashboard/keys).
 
 ### 1. Initialize the SDK
 
 ```dart
-MediaForge.init(apiKey: 'mf_live_xxxx');
+MediaForge.init(
+  apiKey: 'mf_live_xxxx',
+  timeout: const Duration(seconds: 30),        // Metadata timeout
+  uploadTimeout: const Duration(seconds: 120), // Generous upload timeout
+  maxUploadBytes: 100 * 1024 * 1024,           // 100MB pre-flight ceiling
+);
 ```
 
 ### 2. Verify Health & Key Connectivity
@@ -146,12 +201,24 @@ print('Plan: ${health.apiKey?.plan}');       // 'forge' or 'forge+'
 
 ### 3. Direct CDN Edge Upload
 
-Upload clean media directly to Cloudflare R2 edge storage with real-time byte progress:
+Upload clean media directly to Cloudflare R2 edge storage with real-time byte progress or structured phase updates:
 
 ```dart
 final uploaded = await MediaForge.upload(
   cleanBytes,
   filename: 'profile.jpg',
+  // Structured phase updates (buffering -> edgeProcessing -> completed)
+  onProgressEvent: (event) {
+    switch (event.phase) {
+      case UploadPhase.buffering:
+        print('Sending: ${(event.progress * 100).round()}%');
+      case UploadPhase.edgeProcessing:
+        print('Processing and committing on edge…');
+      case UploadPhase.completed:
+        print('Upload complete!');
+    }
+  },
+  // Or standard callback (reports 1.0 only after server confirms)
   onProgress: (progress) {
     print('Upload: ${(progress * 100).toStringAsFixed(1)}%');
   },
@@ -196,7 +263,7 @@ print('CDN Upload Allowed: ${usage.cdnUploadAllowed}');
 print('Video Allowed: ${usage.allowVideo}');
 ```
 
-### 7. Remote Asset Management
+### 7. Remote Asset Management & Batch Deletion
 
 ```dart
 // List uploaded files (paginated)
@@ -205,8 +272,12 @@ for (final file in fileList.files) {
   print('${file.filename} -> ${file.cdnUrl}');
 }
 
-// Delete an asset from CDN storage
+// Delete a single asset
 await MediaForge.deleteFile(fileList.files.first.id);
+
+// Batch delete multiple assets in parallel
+final batchResult = await MediaForge.deleteFiles(['file-id-1', 'file-id-2']);
+print('Deleted: ${batchResult.deleted.length}, Failed: ${batchResult.failed.length}');
 ```
 
 ---

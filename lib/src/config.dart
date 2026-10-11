@@ -15,10 +15,23 @@ class MediaForgeConfig {
   /// Defaults to `https://api.mediaforge.tech`.
   final String baseUrl;
 
-  /// Request timeout duration.
+  /// Request timeout for lightweight API calls (health, usage, file management).
   ///
   /// Defaults to 30 seconds.
   final Duration timeout;
+
+  /// Timeout for heavy multipart requests (CDN upload, cloud strip).
+  ///
+  /// Defaults to 120 seconds to accommodate slow mobile networks plus edge
+  /// sanitization and storage commit.
+  final Duration uploadTimeout;
+
+  /// Client-side maximum upload size in bytes, validated before any data is
+  /// sent. Set this to your plan or reverse-proxy limit to fail fast instead
+  /// of wasting data and battery on a doomed request.
+  ///
+  /// Defaults to 100 MB. `null` disables the pre-flight check.
+  final int? maxUploadBytes;
 
   /// Creates a new [MediaForgeConfig].
   ///
@@ -27,6 +40,8 @@ class MediaForgeConfig {
     required this.apiKey,
     this.baseUrl = 'https://api.mediaforge.tech',
     this.timeout = const Duration(seconds: 30),
+    this.uploadTimeout = const Duration(seconds: 120),
+    this.maxUploadBytes = 100 * 1024 * 1024,
   }) {
     if (!apiKey.startsWith('mf_live_') && !apiKey.startsWith('mf_test_')) {
       throw AuthException.invalidApiKey(apiKey);

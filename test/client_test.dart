@@ -8,6 +8,7 @@ import 'package:mediaforge_flutter/src/exceptions/auth_exception.dart';
 import 'package:mediaforge_flutter/src/exceptions/network_exception.dart';
 import 'package:mediaforge_flutter/src/exceptions/plan_limit_exception.dart';
 import 'package:mediaforge_flutter/src/exceptions/processing_exception.dart';
+import 'package:mediaforge_flutter/src/upload/upload_phase.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -393,6 +394,208 @@ void main() {
           () => client.getUsage(),
           throwsA(isA<NetworkException>()),
         );
+      });
+
+      test('Nginx HTML 413 error page is sanitized into safe PlanLimitException (Issue 1.1)', () async {
+        const rawNginxHtml = '''
+<html>
+<head><title>413 Request Entity Too Large</title></head>
+<body>
+<center><h1>413 Request Entity Too Large</h1></center>
+<hr><center>nginx/1.18.0 (Ubuntu)</center>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js"></script>
+</body>
+</html>
+''';
+
+        final mock = MockClient((r) async => http.Response(
+              rawNginxHtml,
+              413,
+              headers: {'content-type': 'text/html'},
+            ));
+        final client = MediaForgeClient(apiKey: 'key', httpClient: mock);
+
+        try {
+          await client.uploadToCdn(Uint8List(100));
+          fail('Expected PlanLimitException');
+        } on PlanLimitException catch (e) {
+          expect(e.limitName, equals('file_size'));
+          expect(e.code, equals('file_size_exceeded'));
+          // Must NEVER contain raw HTML tags or Cloudflare script
+          expect(e.message, isNot(contains('<html')));
+          expect(e.message, isNot(contains('<script')));
+          expect(e.message, isNot(contains('cloudflareinsights')));
+          expect(e.message, contains('edge upload limit'));
+        }
+      });
+
+      test('Nginx HTML 502 Bad Gateway is sanitized into safe NetworkException (Issue 1.1)', () async {
+        const raw502Html = '<html><body>502 Bad Gateway</body></html>';
+        final mock = MockClient((r) async => http.Response(
+              raw502Html,
+              502,
+              headers: {'content-type': 'text/html'},
+            ));
+        final client = MediaForgeClient(apiKey: 'key', httpClient: mock);
+
+        try {
+          await client.getUsage();
+          fail('Expected NetworkException');
+        } on NetworkException catch (e) {
+          expect(e.message, isNot(contains('<html')));
+          expect(e.message, contains('temporarily unavailable'));
+          expect(e.statusCode, equals(502));
+        }
+      });
+
+      test('Cloudflare/WAF HTML 403 maps to edge_forbidden NetworkException', () async {
+        const raw403Html = '<html><head><title>Access Denied</title></head></html>';
+        final mock = MockClient((r) async => http.Response(
+              raw403Html,
+              403,
+              headers: {'content-type': 'text/html'},
+            ));
+        final client = MediaForgeClient(apiKey: 'key', httpClient: mock);
+
+        try {
+          await client.getUsage();
+          fail('Expected NetworkException');
+        } on NetworkException catch (e) {
+          expect(e.code, equals('edge_forbidden'));
+          expect(e.message, contains('blocked by the MediaForge edge network'));
+        }
+      });
+    });
+
+    group('v0.3.0 Client Features', () {
+      test('client-side pre-flight size validation throws immediately (Issue 1.4)', () async {
+        final mock = MockClient((r) async {
+          fail('Network request must not be triggered when payload exceeds limit');
+        });
+
+        final client = MediaForgeClient(
+          apiKey: testApiKey,
+          httpClient: mock,
+          maxUploadBytes: 1024, // 1 KB ceiling for test
+        );
+
+        final largePayload = Uint8List(2048); // 2 KB payload
+        try {
+          await client.uploadToCdn(largePayload);
+          fail('Expected PlanLimitException');
+        } on PlanLimitException catch (e) {
+          expect(e.code, equals('client_payload_too_large'));
+          expect(e.limitName, equals('file_size'));
+          expect(e.currentUsage, equals(2048));
+          expect(e.maxAllowed, equals(1024));
+          expect(e.message, contains('exceeds the maximum upload size'));
+        }
+      });
+
+      test('multi-phase upload progress emits buffering, edgeProcessing, and completed (Issue 1.2)', () async {
+        final testPayload = Uint8List(128 * 1024); // 128 KB
+        final phases = <UploadPhase>[];
+        final legacyValues = <double>[];
+
+        final mock = MockClient((r) async {
+          return http.Response(
+            jsonEncode({
+              'file': {
+                'id': 'file-phase-1',
+                'filename': 'phase.png',
+                'cdnUrl': 'https://cdn.mediaforge.tech/phase.png',
+                'sizeBytes': testPayload.length,
+                'mimeType': 'image/png',
+                'format': 'png',
+                'metadataStripped': true,
+                'createdAt': '2026-09-17T09:00:00Z',
+              }
+            }),
+            201,
+          );
+        });
+
+        final client = MediaForgeClient(
+          apiKey: testApiKey,
+          httpClient: mock,
+        );
+
+        await client.uploadToCdn(
+          testPayload,
+          filename: 'phase.png',
+          onProgress: (p) => legacyValues.add(p),
+          onProgressEvent: (event) => phases.add(event.phase),
+        );
+
+        expect(phases, contains(UploadPhase.buffering));
+        expect(phases, contains(UploadPhase.edgeProcessing));
+        expect(phases.last, equals(UploadPhase.completed));
+
+        // Legacy onProgress only reaches 1.0 when the server completes
+        expect(legacyValues.last, equals(1.0));
+      });
+
+      test('uploadStreamToCdn streams without full memory buffering (Suggestion 2.1)', () async {
+        final chunks = [
+          Uint8List.fromList([1, 2, 3, 4]),
+          Uint8List.fromList([5, 6, 7, 8]),
+        ];
+        final stream = Stream<List<int>>.fromIterable(chunks);
+
+        final mock = MockClient((request) async {
+          expect(request.url.path, equals('/v1/developer/upload'));
+          return http.Response(
+            jsonEncode({
+              'file': {
+                'id': 'f-stream-1',
+                'filename': 'data.bin',
+                'cdnUrl': 'https://cdn.mediaforge.tech/data.bin',
+                'sizeBytes': 8,
+                'mimeType': 'application/octet-stream',
+                'format': 'bin',
+                'metadataStripped': false,
+                'createdAt': '2026-09-17T09:00:00Z',
+              }
+            }),
+            201,
+          );
+        });
+
+        final client = MediaForgeClient(
+          apiKey: testApiKey,
+          httpClient: mock,
+        );
+
+        final file = await client.uploadStreamToCdn(
+          stream,
+          length: 8,
+          filename: 'data.bin',
+        );
+
+        expect(file.id, equals('f-stream-1'));
+        expect(file.sizeBytes, equals(8));
+      });
+
+      test('deleteFiles runs batch deletion with concurrency and handles partial failures (Suggestion 2.4)', () async {
+        final mock = MockClient((request) async {
+          if (request.url.path.endsWith('/good-1') || request.url.path.endsWith('/good-2')) {
+            return http.Response('', 204);
+          }
+          if (request.url.path.endsWith('/bad-1')) {
+            return http.Response(jsonEncode({'error': 'File not found'}), 404);
+          }
+          return http.Response('Server Error', 500);
+        });
+
+        final client = MediaForgeClient(apiKey: testApiKey, httpClient: mock);
+
+        final result = await client.deleteFiles(['good-1', 'bad-1', 'good-2'], concurrency: 2);
+
+        expect(result.deleted, containsAll(['good-1', 'good-2']));
+        expect(result.failed.containsKey('bad-1'), isTrue);
+        expect(result.hasFailures, isTrue);
+        expect(result.allSucceeded, isFalse);
+        expect(result.total, equals(3));
       });
     });
   });

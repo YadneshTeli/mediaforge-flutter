@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'client/mediaforge_client.dart';
 import 'config.dart';
 import 'exceptions/auth_exception.dart';
+import 'io/file_support.dart';
+import 'mediaforge_local.dart';
+import 'models/batch_delete_result.dart';
 import 'models/exif_data.dart';
 import 'models/file_list_result.dart';
 import 'models/mediaforge_file.dart';
@@ -14,13 +18,17 @@ import 'processing/exif_reader.dart';
 import 'processing/exif_stripper.dart';
 import 'processing/image_processor.dart';
 import 'processing/processing_pipeline.dart';
+import 'upload/upload_phase.dart';
 import 'upload/uploader.dart';
+
+export 'mediaforge_local.dart' show MediaForgeLocal, MediaForgeLocalNamespace;
 
 /// Main entry point for the MediaForge Flutter SDK.
 ///
-/// Provides static methods for both privacy-first on-device media processing
-/// and Developer API cloud services (stripping stream, Cloudflare R2 CDN upload,
-/// quota telemetry, remote asset management).
+/// Provides static methods and explicit namespaces ([local] and [cloud])
+/// for both privacy-first on-device media processing and Developer API
+/// cloud services (Cloudflare R2 CDN upload, streaming uploads, quota
+/// telemetry, remote asset management).
 ///
 /// **Local processing works without initialization.**
 /// Call [init] only when you need CDN upload or cloud Developer API functionality.
@@ -31,11 +39,13 @@ import 'upload/uploader.dart';
 /// import 'package:mediaforge_flutter/mediaforge_flutter.dart';
 ///
 /// // Read metadata
+/// final metadata = await MediaForge.local.readMetadata(imageBytes);
+/// // Or directly:
 /// final metadata = await MediaForge.readMetadata(imageBytes);
 ///
 /// // Strip all metadata with verification
-/// final clean = await MediaForge.stripMetadata(imageBytes);
-/// final verified = await MediaForge.verifyClean(clean); // true
+/// final clean = await MediaForge.local.stripMetadata(imageBytes);
+/// final verified = await MediaForge.local.verifyClean(clean); // true
 ///
 /// // Pipeline: strip -> resize -> compress -> convert
 /// final result = await MediaForge.pipeline(imageBytes)
@@ -51,11 +61,17 @@ import 'upload/uploader.dart';
 /// ```dart
 /// MediaForge.init(apiKey: 'mf_live_xxxx');
 ///
-/// // 1. Upload clean bytes to global CDN
+/// // 1. Fluent Pipeline -> Upload chain
+/// final uploaded = await MediaForge.pipeline(rawBytes)
+///   .stripMetadata()
+///   .compress(quality: 80)
+///   .upload(filename: 'clean.jpg');
+///
+/// // 2. Direct upload
 /// final uploaded = await MediaForge.upload(cleanBytes, filename: 'hero.jpg');
 /// print('CDN URL: ${uploaded.cdnUrl}');
 ///
-/// // 2. Check remaining operations and storage
+/// // 3. Check remaining operations and storage
 /// final usage = await MediaForge.getUsage();
 /// print('Ops used: ${usage.operationsUsed} / ${usage.operationsLimit}');
 /// ```
@@ -65,6 +81,16 @@ class MediaForge {
   static const ExifReader _reader = ExifReader();
   static const ExifStripper _stripper = ExifStripper();
   static const ImageProcessor _processor = ImageProcessor();
+
+  /// Explicit namespace for offline-only, zero-network media operations.
+  ///
+  /// Guarantees 100% on-device execution with zero network communication.
+  static const MediaForgeLocalNamespace local = MediaForgeLocalNamespace();
+
+  /// Explicit namespace for remote MediaForge Developer Cloud services.
+  ///
+  /// Requires initialization with [MediaForge.init].
+  static const MediaForgeCloud cloud = MediaForgeCloud();
 
   // Prevent instantiation
   MediaForge._();
@@ -83,22 +109,31 @@ class MediaForge {
   /// https://mediaforge.tech/dashboard/keys
   ///
   /// [baseUrl] defaults to `https://api.mediaforge.tech`.
+  /// [timeout] defaults to 30 seconds for standard queries.
+  /// [uploadTimeout] defaults to 120 seconds for heavy uploads.
+  /// [maxUploadBytes] defaults to 100 MB client-side ceiling (`null` disables).
   static void init({
     required String apiKey,
     String? baseUrl,
     Duration? timeout,
+    Duration? uploadTimeout,
+    int? maxUploadBytes = MediaForgeClient.defaultMaxUploadBytes,
     MediaForgeClient? client,
   }) {
     _config = MediaForgeConfig(
       apiKey: apiKey,
       baseUrl: baseUrl ?? 'https://api.mediaforge.tech',
       timeout: timeout ?? const Duration(seconds: 30),
+      uploadTimeout: uploadTimeout ?? MediaForgeClient.defaultUploadTimeout,
+      maxUploadBytes: maxUploadBytes,
     );
     _client = client ??
         MediaForgeClient(
           apiKey: _config!.apiKey,
           baseUrl: _config!.baseUrl,
           timeout: _config!.timeout,
+          uploadTimeout: _config!.uploadTimeout,
+          maxUploadBytes: _config!.maxUploadBytes,
         );
   }
 
@@ -115,6 +150,8 @@ class MediaForge {
         apiKey: _config!.apiKey,
         baseUrl: _config!.baseUrl,
         timeout: _config!.timeout,
+        uploadTimeout: _config!.uploadTimeout,
+        maxUploadBytes: _config!.maxUploadBytes,
       );
       return _client!;
     }
@@ -142,6 +179,16 @@ class MediaForge {
     return _reader.read(bytes);
   }
 
+  /// Reads EXIF metadata directly from a `dart:io` `File` using streaming
+  /// random-access reading without loading the entire image into memory.
+  ///
+  /// Prevents Out-Of-Memory (OOM) crashes on high-resolution camera photos.
+  ///
+  /// Throws [UnsupportedError] if called on web platforms.
+  static Future<ExifData> readMetadataFile(dynamic file) {
+    return FileSupport.readMetadataFile(file);
+  }
+
   /// Strips ALL metadata from the image [bytes].
   ///
   /// Returns clean image bytes with all EXIF/XMP/IPTC data removed.
@@ -150,6 +197,25 @@ class MediaForge {
   /// Does NOT require [init] — this is a local-only operation.
   static Future<Uint8List> stripMetadata(Uint8List bytes) {
     return _stripper.stripAll(bytes);
+  }
+
+  /// Strips metadata from a `dart:io` `File` on disk.
+  ///
+  /// Writes clean bytes to [destinationFile], or overwrites [file] if omitted.
+  /// Enforces a maximum file size limit (50 MB) and uses safe temp-file writing
+  /// to ensure the original source file is preserved intact on write failures.
+  ///
+  /// Emits [UnsupportedError] through the returned Future on web platforms.
+  static Future<dynamic> stripMetadataFile(
+    dynamic file, {
+    dynamic destinationFile,
+    int? maxFileSizeBytes,
+  }) {
+    return FileSupport.stripMetadataFile(
+      file,
+      destinationFile: destinationFile,
+      maxFileSizeBytes: maxFileSizeBytes,
+    );
   }
 
   /// Strips only GPS location data from the image [bytes].
@@ -230,9 +296,16 @@ class MediaForge {
 
   /// Creates a chainable processing pipeline.
   ///
+  /// [runInIsolate]: `true` forces background isolate execution, `false`
+  /// forces inline execution, `null` (default) decides automatically based on
+  /// input size (>500KB offloads to isolate on native platforms).
+  ///
   /// Does NOT require [init] — this is a local-only operation.
-  static ProcessingPipeline pipeline(Uint8List bytes) {
-    return ProcessingPipeline(bytes);
+  static ProcessingPipeline pipeline(
+    Uint8List bytes, {
+    bool? runInIsolate,
+  }) {
+    return ProcessingPipeline(bytes, runInIsolate: runInIsolate);
   }
 
   // =====================================================
@@ -282,8 +355,9 @@ class MediaForge {
   static Future<Uint8List> stripCloud(
     Uint8List bytes, {
     String? filename,
+    Duration? timeout,
   }) {
-    return client.stripCloud(bytes, filename: filename);
+    return client.stripCloud(bytes, filename: filename, timeout: timeout);
   }
 
   /// Uploads media [bytes] to the Cloudflare R2 edge CDN with metadata stripping.
@@ -295,13 +369,17 @@ class MediaForge {
   /// - [filename]: Optional filename for storage (e.g. 'hero.jpg')
   /// - [folder]: Optional folder path on CDN
   /// - [onProgress]: Progress callback receiving ratio (0.0 to 1.0)
+  /// - [onProgressEvent]: Structured phase-aware progress callback
+  /// - [timeout]: Custom upload timeout overriding the default (120s)
   ///
   /// Returns an [UploadResult] containing the public CDN URL and file metadata.
   static Future<UploadResult> upload(
     Uint8List bytes, {
     String? filename,
     String? folder,
-    void Function(double progress)? onProgress,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
   }) async {
     if (_config == null) {
       throw const AuthException.notInitialized();
@@ -313,6 +391,61 @@ class MediaForge {
       filename: filename,
       folder: folder,
       onProgress: onProgress,
+      onProgressEvent: onProgressEvent,
+      timeout: timeout,
+    );
+  }
+
+  /// Uploads media from a byte [stream] directly to the CDN without loading
+  /// the full file into memory at once.
+  ///
+  /// Highly recommended for camera photos and videos to avoid mobile OOM crashes.
+  static Future<UploadResult> uploadStream(
+    Stream<List<int>> stream, {
+    required int length,
+    required String filename,
+    String? contentType,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) async {
+    if (_config == null) {
+      throw const AuthException.notInitialized();
+    }
+
+    final uploader = MediaForgeUploader(_config!, client: _client);
+    return uploader.uploadStream(
+      stream,
+      length: length,
+      filename: filename,
+      contentType: contentType,
+      folder: folder,
+      onProgress: onProgress,
+      onProgressEvent: onProgressEvent,
+      timeout: timeout,
+    );
+  }
+
+  /// Streams a `dart:io` `File` directly from disk to the CDN.
+  ///
+  /// Avoids loading large files into memory buffers.
+  /// Throws [UnsupportedError] on web platforms.
+  static Future<UploadResult> uploadFile(
+    dynamic file, {
+    String? filename,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) {
+    return FileSupport.uploadFile(
+      file,
+      filename: filename,
+      folder: folder,
+      onProgress: onProgress,
+      onProgressEvent: onProgressEvent,
+      timeout: timeout,
     );
   }
 
@@ -326,7 +459,9 @@ class MediaForge {
     ProcessingOptions? options,
     String? filename,
     String? folder,
-    void Function(double progress)? onProgress,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
   }) async {
     final processed = options != null
         ? await process(bytes, options)
@@ -337,6 +472,8 @@ class MediaForge {
       filename: filename,
       folder: folder,
       onProgress: onProgress,
+      onProgressEvent: onProgressEvent,
+      timeout: timeout,
     );
   }
 
@@ -371,4 +508,138 @@ class MediaForge {
   static Future<void> deleteFile(String fileId) {
     return client.deleteFile(fileId);
   }
+
+  /// Deletes multiple files in parallel with controlled concurrency.
+  ///
+  /// Returns a [BatchDeleteResult] reporting both succeeded and failed deletions.
+  /// **Requires [init] with a valid API key.**
+  static Future<BatchDeleteResult> deleteFiles(
+    Iterable<String> fileIds, {
+    int concurrency = 4,
+  }) {
+    return client.deleteFiles(fileIds, concurrency: concurrency);
+  }
+}
+
+/// Remote cloud services namespace for MediaForge.
+///
+/// Requires [MediaForge.init] with a Developer API key.
+class MediaForgeCloud {
+  /// Creates a [MediaForgeCloud] instance.
+  const MediaForgeCloud();
+
+  /// Verifies API connectivity and key validity.
+  Future<MediaForgeHealth> checkHealth({String? apiKey, String? baseUrl}) =>
+      MediaForge.checkHealth(apiKey: apiKey, baseUrl: baseUrl);
+
+  /// Offloads metadata stripping to MediaForge cloud without CDN storage.
+  Future<Uint8List> strip(
+    Uint8List bytes, {
+    String? filename,
+    Duration? timeout,
+  }) =>
+      MediaForge.stripCloud(bytes, filename: filename, timeout: timeout);
+
+  /// Uploads media [bytes] to Cloudflare R2 CDN.
+  Future<UploadResult> upload(
+    Uint8List bytes, {
+    String? filename,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) =>
+      MediaForge.upload(
+        bytes,
+        filename: filename,
+        folder: folder,
+        onProgress: onProgress,
+        onProgressEvent: onProgressEvent,
+        timeout: timeout,
+      );
+
+  /// Streams a byte [stream] directly to the CDN.
+  Future<UploadResult> uploadStream(
+    Stream<List<int>> stream, {
+    required int length,
+    required String filename,
+    String? contentType,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) =>
+      MediaForge.uploadStream(
+        stream,
+        length: length,
+        filename: filename,
+        contentType: contentType,
+        folder: folder,
+        onProgress: onProgress,
+        onProgressEvent: onProgressEvent,
+        timeout: timeout,
+      );
+
+  /// Streams a `dart:io` `File` directly from disk to the CDN.
+  Future<UploadResult> uploadFile(
+    dynamic file, {
+    String? filename,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) =>
+      MediaForge.uploadFile(
+        file,
+        filename: filename,
+        folder: folder,
+        onProgress: onProgress,
+        onProgressEvent: onProgressEvent,
+        timeout: timeout,
+      );
+
+  /// Processes media on-device and uploads the result in one step.
+  Future<UploadResult> processAndUpload(
+    Uint8List bytes, {
+    ProcessingOptions? options,
+    String? filename,
+    String? folder,
+    ProgressCallback? onProgress,
+    UploadProgressCallback? onProgressEvent,
+    Duration? timeout,
+  }) =>
+      MediaForge.processAndUpload(
+        bytes,
+        options: options,
+        filename: filename,
+        folder: folder,
+        onProgress: onProgress,
+        onProgressEvent: onProgressEvent,
+        timeout: timeout,
+      );
+
+  /// Retrieves account usage and remaining quota.
+  Future<MediaForgeUsage> getUsage() => MediaForge.getUsage();
+
+  /// Lists assets stored in Cloudflare R2 CDN.
+  Future<FileListResult> listFiles({
+    int page = 1,
+    int limit = 20,
+    String? cursor,
+  }) =>
+      MediaForge.listFiles(page: page, limit: limit, cursor: cursor);
+
+  /// Retrieves details for a specific uploaded asset.
+  Future<MediaForgeFile> getFile(String fileId) =>
+      MediaForge.getFile(fileId);
+
+  /// Deletes a file from Cloudflare R2 CDN.
+  Future<void> deleteFile(String fileId) => MediaForge.deleteFile(fileId);
+
+  /// Deletes multiple files in parallel with controlled concurrency.
+  Future<BatchDeleteResult> deleteFiles(
+    Iterable<String> fileIds, {
+    int concurrency = 4,
+  }) =>
+      MediaForge.deleteFiles(fileIds, concurrency: concurrency);
 }

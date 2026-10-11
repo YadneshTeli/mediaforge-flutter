@@ -35,40 +35,7 @@ class ExifReader {
 
     try {
       final tags = await readExifFromBytes(bytes);
-
-      if (tags.isEmpty) {
-        return const ExifData.empty();
-      }
-
-      return ExifData(
-        // Location
-        gpsLatitude: _extractGpsCoordinate(tags, 'GPS GPSLatitude',
-            refTag: 'GPS GPSLatitudeRef', positiveRef: 'N'),
-        gpsLongitude: _extractGpsCoordinate(tags, 'GPS GPSLongitude',
-            refTag: 'GPS GPSLongitudeRef', positiveRef: 'E'),
-        gpsAltitude: _extractDouble(tags, 'GPS GPSAltitude'),
-        // Camera
-        cameraMake: _extractString(tags, 'Image Make'),
-        cameraModel: _extractString(tags, 'Image Model'),
-        serialNumber: _extractString(tags, 'EXIF BodySerialNumber') ??
-            _extractString(tags, 'MakerNote SerialNumber'),
-        lensModel: _extractString(tags, 'EXIF LensModel'),
-        // Timestamps
-        dateTimeOriginal:
-            _extractDateTime(tags, 'EXIF DateTimeOriginal'),
-        dateTimeDigitized:
-            _extractDateTime(tags, 'EXIF DateTimeDigitized'),
-        dateTimeModified: _extractDateTime(tags, 'Image DateTime'),
-        // Software
-        software: _extractString(tags, 'Image Software'),
-        firmware: _extractString(tags, 'EXIF Firmware') ??
-            _extractString(tags, 'MakerNote Firmware'),
-        // Author
-        artist: _extractString(tags, 'Image Artist'),
-        copyright: _extractString(tags, 'Image Copyright'),
-        // Raw fields
-        rawFields: _buildRawFieldsMap(tags),
-      );
+      return parseTags(tags);
     } on ProcessingException {
       rethrow;
     } catch (e) {
@@ -77,6 +44,43 @@ class ExifReader {
         code: 'metadata_read_error',
       );
     }
+  }
+
+  /// Converts a map of parsed EXIF [tags] into an [ExifData] model.
+  ExifData parseTags(Map<String, IfdTag> tags) {
+    if (tags.isEmpty) {
+      return const ExifData.empty();
+    }
+
+    return ExifData(
+      // Location
+      gpsLatitude: _extractGpsCoordinate(tags, 'GPS GPSLatitude',
+          refTag: 'GPS GPSLatitudeRef', positiveRef: 'N'),
+      gpsLongitude: _extractGpsCoordinate(tags, 'GPS GPSLongitude',
+          refTag: 'GPS GPSLongitudeRef', positiveRef: 'E'),
+      gpsAltitude: _extractDouble(tags, 'GPS GPSAltitude'),
+      // Camera
+      cameraMake: _extractString(tags, 'Image Make'),
+      cameraModel: _extractString(tags, 'Image Model'),
+      serialNumber: _extractString(tags, 'EXIF BodySerialNumber') ??
+          _extractString(tags, 'MakerNote SerialNumber'),
+      lensModel: _extractString(tags, 'EXIF LensModel'),
+      // Timestamps
+      dateTimeOriginal:
+          _extractDateTime(tags, 'EXIF DateTimeOriginal'),
+      dateTimeDigitized:
+          _extractDateTime(tags, 'EXIF DateTimeDigitized'),
+      dateTimeModified: _extractDateTime(tags, 'Image DateTime'),
+      // Software
+      software: _extractString(tags, 'Image Software'),
+      firmware: _extractString(tags, 'EXIF Firmware') ??
+          _extractString(tags, 'MakerNote Firmware'),
+      // Author
+      artist: _extractString(tags, 'Image Artist'),
+      copyright: _extractString(tags, 'Image Copyright'),
+      // Raw fields
+      rawFields: _buildRawFieldsMap(tags),
+    );
   }
 
   /// Checks if the given [bytes] contain any EXIF metadata.

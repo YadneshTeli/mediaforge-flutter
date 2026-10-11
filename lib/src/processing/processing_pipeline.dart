@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../models/image_format.dart';
 import '../models/resize_mode.dart';
+import '../utils/background_runner.dart';
 import '../utils/mime_type.dart';
 import 'exif_stripper.dart';
 import 'image_processor.dart';
@@ -23,20 +24,50 @@ import 'image_processor.dart';
 /// print('Output: ${result.sizeBytes} bytes');
 /// final cleanBytes = result.bytes;
 /// ```
+///
+/// ## Background isolates
+///
+/// Decoding, resizing and re-encoding are CPU-heavy. To keep the UI at 60fps,
+/// the pipeline runs in a background isolate when [runInIsolate] is `true`,
+/// or automatically when it is `null` (default) and the input is larger than
+/// [autoIsolateThresholdBytes]. On the Web, work always runs inline.
+///
+/// ```dart
+/// final result = await MediaForge.pipeline(bytes, runInIsolate: true)
+///   .resize(width: 1080)
+///   .execute();
+/// ```
 class ProcessingPipeline {
+  /// Inputs larger than this are processed in a background isolate when
+  /// `runInIsolate` is left as `null`.
+  static const int autoIsolateThresholdBytes = 500 * 1024;
+
   final Uint8List _inputBytes;
   final List<_PipelineStep> _steps = [];
   final ExifStripper _stripper;
   final ImageProcessor _processor;
+  final bool? _runInIsolate;
 
   /// Creates a new [ProcessingPipeline] with the given input [bytes].
+  ///
+  /// [runInIsolate]: `true` forces background isolate execution, `false`
+  /// forces inline execution, `null` (default) decides automatically based on
+  /// input size.
   ProcessingPipeline(
     Uint8List bytes, {
     ExifStripper? stripper,
     ImageProcessor? processor,
+    bool? runInIsolate,
   })  : _inputBytes = bytes,
         _stripper = stripper ?? const ExifStripper(),
-        _processor = processor ?? const ImageProcessor();
+        _processor = processor ?? const ImageProcessor(),
+        _runInIsolate = runInIsolate;
+
+  /// Whether [execute] will offload work to a background isolate.
+  bool get willRunInIsolate =>
+      supportsBackgroundIsolates &&
+      (_runInIsolate ??
+          _inputBytes.lengthInBytes > autoIsolateThresholdBytes);
 
   /// Adds a metadata stripping step to the pipeline.
   ///
@@ -93,27 +124,40 @@ class ProcessingPipeline {
   ///
   /// Each step receives the output of the previous step as input.
   /// If no steps were added, returns the original bytes unchanged.
-  Future<PipelineResult> execute() async {
-    final originalSize = _inputBytes.length;
+  ///
+  /// Runs in a background isolate when [willRunInIsolate] is `true`.
+  Future<PipelineResult> execute() {
+    // Snapshot into locals so the closure captures only sendable values
+    // (never `this`), which is required to cross the isolate boundary.
+    final input = _inputBytes;
+    final steps = List<_PipelineStep>.unmodifiable(_steps);
+    final stripper = _stripper;
+    final processor = _processor;
 
-    if (_steps.isEmpty) {
-      final dimensions = await _processor.getDimensions(_inputBytes);
-      return PipelineResult(
-        bytes: _inputBytes,
-        sizeBytes: originalSize,
-        originalSizeBytes: originalSize,
-        width: dimensions.width,
-        height: dimensions.height,
+    if (willRunInIsolate) {
+      return runInBackground(
+        () => _runSteps(input, steps, stripper, processor),
       );
     }
+    return _runSteps(input, steps, stripper, processor);
+  }
 
-    var currentBytes = _inputBytes;
-    for (final step in _steps) {
-      currentBytes = await step.execute(currentBytes, _stripper, _processor);
+
+  static Future<PipelineResult> _runSteps(
+    Uint8List input,
+    List<_PipelineStep> steps,
+    ExifStripper stripper,
+    ImageProcessor processor,
+  ) async {
+    final originalSize = input.length;
+
+    var currentBytes = input;
+    for (final step in steps) {
+      currentBytes = await step.execute(currentBytes, stripper, processor);
     }
 
     // Get final dimensions
-    final dimensions = await _processor.getDimensions(currentBytes);
+    final dimensions = await processor.getDimensions(currentBytes);
 
     return PipelineResult(
       bytes: currentBytes,
