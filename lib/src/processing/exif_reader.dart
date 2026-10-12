@@ -58,7 +58,7 @@ class ExifReader {
           refTag: 'GPS GPSLatitudeRef', positiveRef: 'N'),
       gpsLongitude: _extractGpsCoordinate(tags, 'GPS GPSLongitude',
           refTag: 'GPS GPSLongitudeRef', positiveRef: 'E'),
-      gpsAltitude: _extractDouble(tags, 'GPS GPSAltitude'),
+      gpsAltitude: _extractAltitude(tags),
       // Camera
       cameraMake: _extractString(tags, 'Image Make'),
       cameraModel: _extractString(tags, 'Image Model'),
@@ -148,6 +148,20 @@ class ExifReader {
     } catch (_) {
       return null;
     }
+  }
+
+  double? _extractAltitude(Map<String, IfdTag> tags) {
+    var altitude = _extractDouble(tags, 'GPS GPSAltitude');
+    if (altitude == null) return null;
+
+    final refTag = tags['GPS GPSAltitudeRef'];
+    if (refTag != null) {
+      final refStr = refTag.printable.trim();
+      if (refStr == '1' || refStr.toLowerCase().contains('below')) {
+        altitude = -altitude.abs();
+      }
+    }
+    return altitude;
   }
 
   DateTime? _extractDateTime(Map<String, IfdTag> tags, String key) {

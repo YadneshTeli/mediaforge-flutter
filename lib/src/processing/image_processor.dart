@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -79,7 +80,8 @@ class ImageProcessor {
     try {
       final image = _decode(bytes);
       final format = MimeType.formatFromBytes(bytes) ?? ImageFormat.jpeg;
-      return _encode(image, format, clampedQuality);
+      final safeFormat = format == ImageFormat.webp ? ImageFormat.png : format;
+      return _encode(image, safeFormat, clampedQuality);
     } on ProcessingException {
       rethrow;
     } catch (e) {
@@ -153,27 +155,38 @@ class ImageProcessor {
     // 2. JPEG: SOF markers
     if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
       var offset = 2;
-      while (offset + 8 < bytes.length) {
+      while (offset + 4 < bytes.length) {
         if (bytes[offset] != 0xFF) {
           offset++;
           continue;
         }
-        final marker = bytes[offset + 1];
+        while (offset < bytes.length && bytes[offset] == 0xFF) {
+          offset++;
+        }
+        if (offset >= bytes.length) break;
+
+        final marker = bytes[offset++];
         if (marker == 0xD9 || marker == 0xDA) break; // EOI or SOS
-        if (offset + 4 > bytes.length) break;
-        final length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+        // Standalone markers: RST0-7 (D0-D7), TEM (01)
+        if ((marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) {
+          continue;
+        }
+
+        if (offset + 2 > bytes.length) break;
+        final length = (bytes[offset] << 8) | bytes[offset + 1];
+        if (length < 2) break;
 
         final isSof = (marker >= 0xC0 && marker <= 0xC3) ||
             (marker >= 0xC5 && marker <= 0xC7) ||
             (marker >= 0xC9 && marker <= 0xCB);
 
-        if (isSof && offset + 8 < bytes.length) {
-          final h = (bytes[offset + 5] << 8) | bytes[offset + 6];
-          final w = (bytes[offset + 7] << 8) | bytes[offset + 8];
+        if (isSof && offset + 7 < bytes.length) {
+          final h = (bytes[offset + 3] << 8) | bytes[offset + 4];
+          final w = (bytes[offset + 5] << 8) | bytes[offset + 6];
           if (w > 0 && h > 0) return ImageDimensions(width: w, height: h);
         }
 
-        offset += 2 + length;
+        offset += length;
       }
     }
 
@@ -229,13 +242,27 @@ class ImageProcessor {
     const interpolation = img.Interpolation.linear;
 
     return switch (mode) {
-      ResizeMode.fit => img.copyResize(
-          image,
-          width: targetWidth > 0 ? targetWidth : null,
-          height: targetHeight > 0 ? targetHeight : null,
-          interpolation: interpolation,
-          maintainAspect: maintainAspectRatio,
-        ),
+      ResizeMode.fit => () {
+          if (targetWidth > 0 && targetHeight > 0 && maintainAspectRatio) {
+            final scale = min(targetWidth / image.width, targetHeight / image.height);
+            final rw = max(1, (image.width * scale).round());
+            final rh = max(1, (image.height * scale).round());
+            return img.copyResize(
+              image,
+              width: rw,
+              height: rh,
+              interpolation: interpolation,
+              maintainAspect: false,
+            );
+          }
+          return img.copyResize(
+            image,
+            width: targetWidth > 0 ? targetWidth : null,
+            height: targetHeight > 0 ? targetHeight : null,
+            interpolation: interpolation,
+            maintainAspect: maintainAspectRatio,
+          );
+        }(),
       ResizeMode.cover => _resizeCover(image, targetWidth, targetHeight, interpolation),
       ResizeMode.contain => _resizeContain(image, targetWidth, targetHeight, interpolation),
       ResizeMode.fill => img.copyResize(
@@ -299,8 +326,8 @@ class ImageProcessor {
     // If already fits, return as-is
     if (resized.width == w && resized.height == h) return resized;
 
-    // Create canvas at target size and center the image
-    final canvas = img.Image(width: w, height: h);
+    // Create canvas at target size and center the image (preserve channel count for transparency)
+    final canvas = img.Image(width: w, height: h, numChannels: image.numChannels);
     final offsetX = (w - resized.width) ~/ 2;
     final offsetY = (h - resized.height) ~/ 2;
 

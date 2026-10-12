@@ -16,7 +16,6 @@ import 'models/processing_options.dart';
 import 'models/upload_result.dart';
 import 'processing/exif_reader.dart';
 import 'processing/exif_stripper.dart';
-import 'processing/image_processor.dart';
 import 'processing/processing_pipeline.dart';
 import 'upload/upload_phase.dart';
 import 'upload/uploader.dart';
@@ -80,7 +79,6 @@ class MediaForge {
   static MediaForgeClient? _client;
   static const ExifReader _reader = ExifReader();
   static const ExifStripper _stripper = ExifStripper();
-  static const ImageProcessor _processor = ImageProcessor();
 
   /// Explicit namespace for offline-only, zero-network media operations.
   ///
@@ -111,7 +109,7 @@ class MediaForge {
   /// [baseUrl] defaults to `https://api.mediaforge.tech`.
   /// [timeout] defaults to 30 seconds for standard queries.
   /// [uploadTimeout] defaults to 120 seconds for heavy uploads.
-  /// [maxUploadBytes] defaults to 100 MB client-side ceiling (`null` disables).
+  /// [maxUploadBytes] defaults to 10 MB client-side ceiling (`null` disables).
   static void init({
     required String apiKey,
     String? baseUrl,
@@ -255,43 +253,8 @@ class MediaForge {
   static Future<Uint8List> process(
     Uint8List bytes,
     ProcessingOptions options,
-  ) async {
-    var current = bytes;
-
-    // Strip metadata first (if enabled)
-    if (options.stripMetadata) {
-      current = await _stripper.stripAll(current);
-    } else if (options.stripGpsOnly) {
-      current = await _stripper.stripSelective(current, stripGps: true);
-    }
-
-    // Resize (if configured)
-    if (options.hasResize) {
-      current = await _processor.resize(
-        current,
-        width: options.resizeWidth,
-        height: options.resizeHeight,
-        mode: options.resizeMode,
-        maintainAspectRatio: options.maintainAspectRatio,
-      );
-    }
-
-    // Convert format and/or compress
-    if (options.hasFormatConversion) {
-      current = await _processor.convert(
-        current,
-        format: options.outputFormat!,
-        quality: options.quality,
-        lossless: options.lossless,
-      );
-    } else if (!options.lossless) {
-      current = await _processor.compress(
-        current,
-        quality: options.quality,
-      );
-    }
-
-    return current;
+  ) {
+    return MediaForgeLocal.process(bytes, options);
   }
 
   /// Creates a chainable processing pipeline.

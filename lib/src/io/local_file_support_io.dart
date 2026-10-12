@@ -21,22 +21,40 @@ class LocalFileSupport {
   /// crashes on constrained devices.
   static const int maxStripFileSizeBytes = 50 * 1024 * 1024;
 
+  /// Resolves a [File] instance from a [File] or any object with a valid `.path`
+  /// property (such as Flutter's `XFile`), preventing runtime type crashes.
+  static File resolveFile(dynamic file, [String paramName = 'file']) {
+    if (file is File) return file;
+    if (file != null) {
+      try {
+        final dynamic path = (file as dynamic).path;
+        if (path is String && path.isNotEmpty) {
+          return File(path);
+        }
+      } catch (_) {}
+    }
+    throw ArgumentError.value(
+      file,
+      paramName,
+      'Expected a dart:io File instance or an object with a file path (e.g. XFile)',
+    );
+  }
+
   /// Reads EXIF metadata directly from a [File] using streaming header access.
   ///
+  /// Accepts a `dart:io` [File] or any object exposing a `.path` (such as `XFile`).
   /// Does not load the entire image into a memory buffer.
   static Future<ExifData> readMetadataFile(dynamic file) async {
-    if (file is! File) {
-      throw ArgumentError.value(file, 'file', 'Expected a dart:io File instance');
-    }
-    if (!file.existsSync()) {
+    final sourceFile = resolveFile(file, 'file');
+    if (!sourceFile.existsSync()) {
       throw ProcessingException(
-        'File does not exist: ${file.path}',
+        'File does not exist: ${sourceFile.path}',
         code: 'file_not_found',
       );
     }
 
     try {
-      final tags = await readExifFromFile(file);
+      final tags = await readExifFromFile(sourceFile);
       return const ExifReader().parseTags(tags);
     } on ProcessingException {
       rethrow;
@@ -51,7 +69,7 @@ class LocalFileSupport {
   /// Strips metadata from a [File] on-device with bounded memory and safe in-place replacement.
   ///
   /// Overwrites [file] if [destinationFile] is omitted, or writes to [destinationFile]
-  /// if provided. Returns the resulting [File].
+  /// if provided. Returns the resulting [File]. Accepts [File] or `XFile`.
   ///
   /// Enforces a file size limit of [maxFileSizeBytes] (defaults to
   /// [maxStripFileSizeBytes], 50 MB) to guarantee bounded memory usage and prevent
@@ -65,25 +83,20 @@ class LocalFileSupport {
     dynamic destinationFile,
     int? maxFileSizeBytes,
   }) async {
-    if (file is! File) {
-      throw ArgumentError.value(file, 'file', 'Expected a dart:io File instance');
-    }
-    if (destinationFile != null && destinationFile is! File) {
-      throw ArgumentError.value(
-        destinationFile,
-        'destinationFile',
-        'Expected a dart:io File instance',
-      );
-    }
-    if (!file.existsSync()) {
+    final sourceFile = resolveFile(file, 'file');
+    final targetFile = destinationFile != null
+        ? resolveFile(destinationFile, 'destinationFile')
+        : sourceFile;
+
+    if (!sourceFile.existsSync()) {
       throw ProcessingException(
-        'File does not exist: ${file.path}',
+        'File does not exist: ${sourceFile.path}',
         code: 'file_not_found',
       );
     }
 
     final limit = maxFileSizeBytes ?? maxStripFileSizeBytes;
-    final fileSize = await file.length();
+    final fileSize = await sourceFile.length();
     if (fileSize > limit) {
       throw ProcessingException(
         'File size ($fileSize bytes) exceeds maximum limit of '
@@ -92,12 +105,11 @@ class LocalFileSupport {
       );
     }
 
-    final bytes = await file.readAsBytes();
+    final bytes = await sourceFile.readAsBytes();
     final cleanBytes = await const ExifStripper().stripAll(bytes);
 
-    final target = (destinationFile as File?) ?? file;
-    await _safeWriteFile(target, cleanBytes);
-    return target;
+    await _safeWriteFile(targetFile, cleanBytes);
+    return targetFile;
   }
 
   /// Writes [data] to a temporary sibling file, verifies its integrity, and
@@ -109,16 +121,12 @@ class LocalFileSupport {
       await parent.create(recursive: true);
     }
 
-    final targetName = target.uri.pathSegments.isNotEmpty
-        ? Uri.decodeComponent(target.uri.pathSegments.last)
-        : 'output';
+    final rawName = target.path.split(RegExp(r'[/\\]')).last;
+    final targetName = rawName.isNotEmpty ? rawName : 'output';
     final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final tempFile = File.fromUri(
-      parent.uri.resolve(Uri.encodeComponent('.mf_tmp_${timestamp}_$targetName')),
-    );
-    final backupFile = File.fromUri(
-      parent.uri.resolve(Uri.encodeComponent('.mf_bak_${timestamp}_$targetName')),
-    );
+    final tempPath =
+        '${parent.path}${Platform.pathSeparator}.mf_tmp_${timestamp}_$targetName';
+    final tempFile = File(tempPath);
 
     try {
       // 1. Write replacement data to temporary file
@@ -133,18 +141,12 @@ class LocalFileSupport {
         );
       }
 
-      // 3. Replace target safely while preserving original on failure
+      // 3. Atomically replace target file
       await tempFile.rename(target.path);
     } finally {
-      // Clean up temporary and backup files if still present
       if (tempFile.existsSync()) {
         try {
           await tempFile.delete();
-        } catch (_) {}
-      }
-      if (backupFile.existsSync()) {
-        try {
-          await backupFile.delete();
         } catch (_) {}
       }
     }

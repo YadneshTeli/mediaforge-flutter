@@ -3,11 +3,13 @@ import 'dart:typed_data';
 
 import 'io/local_file_support.dart';
 import 'models/exif_data.dart';
+import 'models/image_format.dart';
 import 'models/processing_options.dart';
 import 'processing/exif_reader.dart';
 import 'processing/exif_stripper.dart';
 import 'processing/image_processor.dart';
 import 'processing/processing_pipeline.dart';
+import 'utils/mime_type.dart';
 
 /// Offline-only entry point for MediaForge media processing.
 ///
@@ -93,10 +95,13 @@ class MediaForgeLocal {
         lossless: options.lossless,
       );
     } else if (!options.lossless) {
-      current = await _processor.compress(
-        current,
-        quality: options.quality,
-      );
+      final format = MimeType.formatFromBytes(current);
+      if (format != ImageFormat.webp) {
+        current = await _processor.compress(
+          current,
+          quality: options.quality,
+        );
+      }
     }
 
     return current;

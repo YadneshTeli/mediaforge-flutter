@@ -54,21 +54,19 @@ class FileSupport {
     UploadProgressCallback? onProgressEvent,
     Duration? timeout,
   }) async {
-    if (file is! File) {
-      throw ArgumentError.value(file, 'file', 'Expected a dart:io File instance');
-    }
-    if (!file.existsSync()) {
+    final sourceFile = LocalFileSupport.resolveFile(file, 'file');
+    if (!sourceFile.existsSync()) {
       throw ProcessingException(
-        'File does not exist: ${file.path}',
+        'File does not exist: ${sourceFile.path}',
         code: 'file_not_found',
       );
     }
 
-    final length = await file.length();
-    final name = filename ?? _filenameOf(file.path);
+    final length = await sourceFile.length();
+    final name = filename ?? _filenameOf(sourceFile.path);
 
     return MediaForge.uploadStream(
-      file.openRead(),
+      sourceFile.openRead(),
       length: length,
       filename: name,
       folder: folder,

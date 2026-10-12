@@ -110,8 +110,11 @@ class MediaForgeUploader {
   }
 
   void _ensureConfigured() {
-    if (!isConfigured || _config.apiKey.isEmpty) {
+    if (_config.apiKey.isEmpty) {
       throw const AuthException.notInitialized();
+    }
+    if (!_config.isProduction && !_config.isSandbox) {
+      throw AuthException.invalidApiKey(_config.apiKey);
     }
   }
 

@@ -1,9 +1,19 @@
 ## 0.3.0
 
+- **Lossless JPEG & WebP Stripping**: Implemented fast, 100% lossless segment stripping for JPEG (`APP1` EXIF/XMP, `APP13` IPTC, `COM`) and container chunks for WebP without re-encoding pixels, preserving exact image quality with minimal memory usage.
+- **Deep Container Verification**: Extended `verifyClean` and `verify` to scan raw byte headers for JPEG APP1/APP13/COM markers, PNG `tEXt`/`iTXt`/`zTXt`/`eXIf` chunks, and WebP chunks, preventing false-positive clean verification when XMP or text chunks remain.
+- **Complete PNG Metadata Sanitization**: Ensured `stripAll` and `stripSelective` eliminate PNG text/comment and XMP chunks (`image.textData`), preventing metadata leakage in PNG outputs.
+- **Special Character & Percent Sign Path Safety**: Resolved filename sanitization in `LocalFileSupport` to safely handle filenames containing `%`, spaces, and special symbols without double URL-decoding errors.
+- **XFile & Duck-Typed File Compatibility**: `readMetadataFile`, `stripMetadataFile`, and `uploadFile` now seamlessly accept `dart:io File` and any object with a `.path` getter (such as Flutter's `XFile`), avoiding runtime `ArgumentError`s.
+- **Proportional Fit Scaling**: Corrected `ResizeMode.fit` behavior with `maintainAspectRatio` to scale inside the bounding box without adding letterbox padding.
+- **WebP Processing Safety**: Added safe PNG compression fallback for WebP and preserved native WebP format in `process()` when no format conversion is requested.
+- **Request-Level Cancellation & Client Lifecycle**: Implemented stream-level cancellation for multipart transfers on timeout without terminating caller-injected shared `http.Client`s. Added client lifecycle management in `MediaForgeClient.close()` to cleanly abort active transfers and reject subsequent requests.
+- **Realistic Pre-Flight Ceiling**: Adjusted default `maxUploadBytes` to 10MB to match standard edge proxy ceilings and prevent wasteful uploads.
+- **Negative Altitude Support**: Handled `GPS GPSAltitudeRef` in `ExifReader` to accurately report altitudes below sea level as negative values.
 - **Edge Error Sanitization**: Sanitized reverse proxy and edge HTML error pages (Nginx 413, 502, 504, WAF 403), preventing raw HTML tags and Cloudflare beacon scripts from leaking into exceptions.
 - **Multi-Phase Upload Progress**: Introduced structured progress tracking (`UploadProgressEvent`, `UploadPhase.buffering`, `UploadPhase.edgeProcessing`, `UploadPhase.completed`) with 64KB chunk backpressure. Legacy `onProgress` now only reports `1.0` after server confirms upload.
 - **Generous Upload Timeouts**: Increased default upload timeout from 30s to 120s (`uploadTimeout`), distinct from metadata request timeouts, with per-call override support.
-- **Pre-Flight Payload Size Validation**: Added client-side payload validation (`maxUploadBytes`, default 100MB) to fail fast with `PlanLimitException` (`client_payload_too_large`) before wasting cellular data and battery.
+- **Pre-Flight Payload Size Validation**: Added client-side payload validation (`maxUploadBytes`, default 10MB) to fail fast with `PlanLimitException` (`client_payload_too_large`) before wasting cellular data and battery.
 - **Streaming & File Support (OOM Prevention)**: Added `uploadStreamToCdn`, `uploadStream`, `uploadFile`, `readMetadataFile`, and `stripMetadataFile` using streaming I/O to prevent mobile Out-Of-Memory crashes on high-res camera photos (20MB–50MB).
 - **Fluent Pipeline-to-Upload Chaining**: Enabled chaining directly from `MediaForge.pipeline(...)` into `.upload()` in a single statement via `ProcessingPipelineUploadExtension`.
 - **Background Isolate Offloading**: Offloaded CPU-heavy pipeline image processing (decode, resize, compress) to background isolates automatically for payloads >500KB or via explicit `runInIsolate: true`.

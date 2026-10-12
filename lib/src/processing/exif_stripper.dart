@@ -44,20 +44,32 @@ class ExifStripper {
 
   /// Strips ALL metadata from the image [bytes].
   ///
-  /// For WebP images, strips metadata at the RIFF container chunk level
-  /// without re-encoding pixels, preserving authentic, lossless WebP output.
-  /// For JPEG and PNG, decodes and re-encodes clean image bytes.
+  /// For WebP and JPEG images, strips metadata at the container/segment level
+  /// without re-encoding pixels, preserving authentic, 100% lossless output.
+  /// For PNG and fallback cases, decodes and re-encodes clean image bytes with
+  /// all EXIF and text/XMP chunks removed.
   ///
   /// Returns clean image bytes with no EXIF/XMP/IPTC data.
   ///
   /// Throws [ProcessingException] if the image cannot be decoded.
   Future<Uint8List> stripAll(Uint8List bytes) async {
+    final mime = MimeType.fromBytes(bytes);
+
     // Fast lossless RIFF chunk stripping for WebP
-    if (MimeType.fromBytes(bytes) == 'image/webp') {
+    if (mime == 'image/webp') {
       try {
         return _stripWebpChunks(bytes);
       } catch (_) {
         // Fallback to decode/re-encode if chunk parsing fails
+      }
+    }
+
+    // Fast lossless segment stripping for JPEG
+    if (mime == 'image/jpeg') {
+      try {
+        return _stripJpegSegments(bytes);
+      } catch (_) {
+        // Fallback to decode/re-encode if segment parsing fails
       }
     }
 
@@ -69,6 +81,8 @@ class ExifStripper {
 
       // Clear all EXIF data from the decoded image
       image.exif = img.ExifData();
+      // Clear PNG text chunks / XMP blocks (fixes H1)
+      image.textData = null;
 
       // Re-encode in original format (without metadata)
       return _reEncode(image, bytes);
@@ -112,7 +126,14 @@ class ExifStripper {
       if (!stripGps && !stripCamera && !stripTimestamps && !stripSoftware && !stripAuthor) {
         return bytes;
       }
-      return _stripWebpChunks(bytes);
+      try {
+        return _stripWebpChunks(bytes);
+      } catch (e) {
+        throw ProcessingException(
+          'Failed to strip metadata selectively from WebP: $e',
+          code: 'selective_strip_error',
+        );
+      }
     }
 
     try {
@@ -130,6 +151,27 @@ class ExifStripper {
         stripSoftware: stripSoftware,
         stripAuthor: stripAuthor,
       );
+
+      // Filter PNG text chunks selectively if present
+      if (image.textData != null) {
+        if (stripAuthor) {
+          image.textData!.remove('Author');
+          image.textData!.remove('Artist');
+          image.textData!.remove('Copyright');
+          image.textData!.remove('Description');
+        }
+        if (stripTimestamps) {
+          image.textData!.remove('Creation Time');
+        }
+        if (stripSoftware) {
+          image.textData!.remove('Software');
+        }
+        if (stripGps || stripAuthor || stripCamera || stripTimestamps || stripSoftware) {
+          image.textData!.remove('XML:com.adobe.xmp');
+          image.textData!.remove('Raw profile type xmp');
+          image.textData!.remove('Comment');
+        }
+      }
 
       return _reEncode(image, bytes);
     } on ProcessingException {
@@ -294,12 +336,174 @@ class ExifStripper {
     return result;
   }
 
+  /// Losslessly strips JPEG metadata segments (APP1, APP13, COM) directly from the
+  /// byte stream without decompressing or re-encoding pixels.
+  Uint8List _stripJpegSegments(Uint8List bytes) {
+    if (bytes.length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8) {
+      throw const ProcessingException.corruptFile();
+    }
+
+    final out = BytesBuilder(copy: false);
+    out.add([0xFF, 0xD8]); // SOI
+
+    var offset = 2;
+    var strippedAny = false;
+
+    while (offset < bytes.length) {
+      if (bytes[offset] != 0xFF) {
+        throw const ProcessingException.corruptFile();
+      }
+
+      while (offset < bytes.length && bytes[offset] == 0xFF) {
+        offset++;
+      }
+      if (offset >= bytes.length) break;
+
+      final marker = bytes[offset++];
+
+      // Standalone markers: EOI (D9), TEM (01), RST0-7 (D0-D7)
+      if (marker == 0xD9) {
+        out.add([0xFF, 0xD9]);
+        break;
+      }
+      if ((marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) {
+        out.add([0xFF, marker]);
+        continue;
+      }
+      // SOS (Start of Scan): Followed by compressed image data
+      if (marker == 0xDA) {
+        out.add([0xFF, 0xDA]);
+        out.add(bytes.sublist(offset));
+        break;
+      }
+
+      if (offset + 2 > bytes.length) {
+        throw const ProcessingException.corruptFile();
+      }
+      final length = (bytes[offset] << 8) | bytes[offset + 1];
+      if (length < 2 || offset + length > bytes.length) {
+        throw const ProcessingException.corruptFile();
+      }
+
+      // APP1 (Exif / XMP), APP13 (IPTC / Photoshop), COM (Comment)
+      if (marker == 0xE1 || marker == 0xED || marker == 0xFE) {
+        strippedAny = true;
+        offset += length;
+        continue;
+      }
+
+      out.add([0xFF, marker]);
+      out.add(bytes.sublist(offset, offset + length));
+      offset += length;
+    }
+
+    return strippedAny ? out.toBytes() : bytes;
+  }
+
+  /// Inspects raw image bytes to check for residual metadata headers or chunks.
+  ///
+  /// Detects:
+  /// - JPEG: APP1 (EXIF / XMP), APP13 (IPTC), COM markers
+  /// - PNG: `tEXt`, `zTXt`, `iTXt`, `eXIf` chunks
+  /// - WebP: `EXIF`, `XMP ` chunks
+  static bool hasMetadataHeaders(Uint8List bytes) {
+    if (bytes.length < 12) return false;
+
+    // 1. JPEG
+    if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
+      var offset = 2;
+      while (offset + 4 <= bytes.length) {
+        if (bytes[offset] != 0xFF) {
+          offset++;
+          continue;
+        }
+        while (offset < bytes.length && bytes[offset] == 0xFF) {
+          offset++;
+        }
+        if (offset >= bytes.length) break;
+
+        final marker = bytes[offset++];
+        if (marker == 0xD9 || marker == 0xDA) break;
+        if ((marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) continue;
+
+        if (offset + 2 > bytes.length) break;
+        final length = (bytes[offset] << 8) | bytes[offset + 1];
+        if (length < 2 || offset + length > bytes.length) break;
+
+        if (marker == 0xE1 || marker == 0xED || marker == 0xFE) {
+          return true;
+        }
+
+        offset += length;
+      }
+      return false;
+    }
+
+    // 2. PNG
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47 &&
+        bytes[4] == 0x0D &&
+        bytes[5] == 0x0A &&
+        bytes[6] == 0x1A &&
+        bytes[7] == 0x0A) {
+      var offset = 8;
+      while (offset + 8 <= bytes.length) {
+        final length = (bytes[offset] << 24) |
+            (bytes[offset + 1] << 16) |
+            (bytes[offset + 2] << 8) |
+            bytes[offset + 3];
+        final type = String.fromCharCodes(bytes.sublist(offset + 4, offset + 8));
+        if (type == 'tEXt' || type == 'zTXt' || type == 'iTXt' || type == 'eXIf') {
+          return true;
+        }
+        if (type == 'IEND') break;
+        offset += 8 + length + 4;
+      }
+      return false;
+    }
+
+    // 3. WebP
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      var offset = 12;
+      while (offset + 8 <= bytes.length) {
+        final fourCc = String.fromCharCodes(bytes.sublist(offset, offset + 4));
+        if (fourCc == 'EXIF' || fourCc == 'XMP ') {
+          return true;
+        }
+        final chunkLen = bytes[offset + 4] |
+            (bytes[offset + 5] << 8) |
+            (bytes[offset + 6] << 16) |
+            (bytes[offset + 7] << 24);
+        final paddedLen = chunkLen + (chunkLen % 2);
+        offset += 8 + paddedLen;
+      }
+      return false;
+    }
+
+    return false;
+  }
+
   /// Verifies that the given [bytes] contain NO metadata.
   ///
-  /// Returns `true` if the image is clean (0 metadata fields).
-  /// Returns `false` if any metadata fields are still present.
+  /// Returns `true` if the image is clean (0 metadata fields and no residual
+  /// metadata headers).
+  /// Returns `false` if any metadata fields or chunks are still present.
   Future<bool> verify(Uint8List bytes) async {
     try {
+      if (hasMetadataHeaders(bytes)) {
+        return false;
+      }
       final metadata = await _reader.read(bytes);
       return metadata.isEmpty;
     } catch (_) {
@@ -308,10 +512,13 @@ class ExifStripper {
   }
 
   /// Strips metadata and verifies the result in one call.
+  ///
+  /// Inspects the original file first to prevent losing stripped data
+  /// if reading original metadata throws.
   Future<StrippingResult> stripAndVerify(Uint8List bytes) async {
+    final originalMetadata = await _reader.read(bytes);
     final cleanBytes = await stripAll(bytes);
     final isClean = await verify(cleanBytes);
-    final originalMetadata = await _reader.read(bytes);
 
     return StrippingResult(
       cleanBytes: cleanBytes,

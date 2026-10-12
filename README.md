@@ -21,7 +21,7 @@ Strip EXIF metadata on-device or in cloud, compress, resize, convert formats —
 | CDN upload | Yes (Cloudflare R2 edge) | No | Yes (raw file!) |
 | Cloud strip streaming | Yes (/v1/developer/strip) | No | No |
 | Video support | Yes (MP4, MOV on Forge) | No | Yes |
-| Server sees raw file? | **Never** | N/A | **Always** |
+| App backend sees raw metadata? | **Never (stripped on-device)** | N/A | **Always** |
 | Pure Dart (no native) | Yes | No | Yes |
 | Works on Web | Yes | Limited | Yes |
 
@@ -186,7 +186,7 @@ MediaForge.init(
   apiKey: 'mf_live_xxxx',
   timeout: const Duration(seconds: 30),        // Metadata timeout
   uploadTimeout: const Duration(seconds: 120), // Generous upload timeout
-  maxUploadBytes: 100 * 1024 * 1024,           // 100MB pre-flight ceiling
+  maxUploadBytes: 10 * 1024 * 1024,            // 10MB pre-flight ceiling
 );
 ```
 
@@ -322,6 +322,7 @@ try {
 ```
 
 Exception types:
+
 - `ProcessingException` — corrupt file, unsupported format, too large
 - `AuthException` — missing, invalid, or revoked API key
 - `PlanLimitException` — storage or monthly operation limit exceeded

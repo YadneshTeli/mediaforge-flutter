@@ -45,12 +45,12 @@ class MediaForgeClient {
   /// Cloudflare R2 commit.
   static const Duration defaultUploadTimeout = Duration(seconds: 120);
 
-  /// Default client-side ceiling for upload payloads (100 MB).
+  /// Default client-side ceiling for upload payloads (10 MB).
   ///
-  /// Matches the MediaForge API's maximum direct-upload size. Lower it via
+  /// Matches the MediaForge API's edge direct-upload ceiling (10 MB). Lower it via
   /// the `maxUploadBytes` constructor argument to match your plan or reverse
   /// proxy limits, or pass `null` to disable the pre-flight check.
-  static const int defaultMaxUploadBytes = 100 * 1024 * 1024;
+  static const int defaultMaxUploadBytes = 10 * 1024 * 1024;
 
   /// Maximum value reported to a legacy [ProgressCallback] before the server
   /// confirms the upload.
@@ -78,6 +78,13 @@ class MediaForgeClient {
 
   final http.Client _httpClient;
   final bool _ownsClient;
+  bool _isClosed = false;
+
+  /// Whether this client instance has been closed.
+  bool get isClosed => _isClosed;
+
+  final Set<http.Client> _activeMultipartClients = {};
+  final Set<_CancellableTrackedMultipartRequest> _activeRequests = {};
 
   /// Creates a [MediaForgeClient].
   ///
@@ -86,7 +93,7 @@ class MediaForgeClient {
   /// - [baseUrl]: API base URL (defaults to `https://api.mediaforge.tech`)
   /// - [timeout]: Timeout for lightweight requests (defaults to 30 seconds)
   /// - [uploadTimeout]: Timeout for uploads and cloud strip (defaults to 120 seconds)
-  /// - [maxUploadBytes]: Client-side payload ceiling (defaults to 100 MB, `null` disables)
+  /// - [maxUploadBytes]: Client-side payload ceiling (defaults to 10 MB, `null` disables)
   /// - [httpClient]: Optional custom [http.Client] (useful for testing or proxying)
   MediaForgeClient({
     required this.apiKey,
@@ -98,6 +105,15 @@ class MediaForgeClient {
   })  : baseUrl = _normalizeBaseUrl(baseUrl),
         _httpClient = httpClient ?? http.Client(),
         _ownsClient = httpClient == null;
+
+  void _ensureNotClosed() {
+    if (_isClosed) {
+      throw const NetworkException(
+        'MediaForgeClient is closed.',
+        code: 'client_closed',
+      );
+    }
+  }
 
   static String _normalizeBaseUrl(String url) {
     var clean = url.trim();
@@ -121,6 +137,7 @@ class MediaForgeClient {
   ///
   /// Does not require the SDK to be in an active billing state.
   Future<MediaForgeHealth> checkHealth() async {
+    _ensureNotClosed();
     final uri = Uri.parse('$baseUrl/v1/developer/health');
     try {
       final response =
@@ -173,6 +190,7 @@ class MediaForgeClient {
     String? filename,
     Duration? timeout,
   }) async {
+    _ensureNotClosed();
     final uri = Uri.parse('$baseUrl/v1/developer/strip');
     _ensureWithinUploadLimit(bytes.lengthInBytes);
     final actualFilename = filename ?? _inferFilename(bytes, defaultName: 'media');
@@ -369,20 +387,46 @@ class MediaForgeClient {
     required Duration timeout,
     _ProgressReporter? reporter,
   }) {
+    _ensureNotClosed();
+
     final request = http.MultipartRequest('POST', uri)
       ..headers.addAll(_headers)
       ..fields.addAll(fields)
       ..files.add(file);
 
-    final http.BaseRequest toSend =
-        reporter == null ? request : _TrackedMultipartRequest(request, reporter);
+    final cancellable = _CancellableTrackedMultipartRequest(request, reporter);
+
+    final clientToUse = _ownsClient ? http.Client() : _httpClient;
+    if (_ownsClient) {
+      _activeMultipartClients.add(clientToUse);
+    }
+    _activeRequests.add(cancellable);
 
     Future<http.Response> exchange() async {
-      final streamed = await _httpClient.send(toSend);
-      return http.Response.fromStream(streamed);
+      try {
+        final streamed = await clientToUse.send(cancellable);
+        return await http.Response.fromStream(streamed);
+      } finally {
+        _activeRequests.remove(cancellable);
+        if (_ownsClient) {
+          _activeMultipartClients.remove(clientToUse);
+          clientToUse.close();
+        }
+      }
     }
 
-    return exchange().timeout(timeout);
+    return exchange().timeout(
+      timeout,
+      onTimeout: () {
+        cancellable.cancel(
+          TimeoutException('Request timed out after ${timeout.inSeconds}s', timeout),
+        );
+        if (_ownsClient) {
+          clientToUse.close();
+        }
+        throw TimeoutException('Request timed out after ${timeout.inSeconds}s', timeout);
+      },
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -391,6 +435,7 @@ class MediaForgeClient {
 
   /// Retrieves real-time operations, storage, and bandwidth quota usage.
   Future<MediaForgeUsage> getUsage() async {
+    _ensureNotClosed();
     final uri = Uri.parse('$baseUrl/v1/developer/usage');
     try {
       final response =
@@ -429,6 +474,7 @@ class MediaForgeClient {
     int limit = 20,
     String? cursor,
   }) async {
+    _ensureNotClosed();
     final queryParams = <String, String>{
       'limit': limit.toString(),
     };
@@ -466,6 +512,7 @@ class MediaForgeClient {
 
   /// Retrieves metadata and CDN URL for a specific file by its [fileId].
   Future<MediaForgeFile> getFile(String fileId) async {
+    _ensureNotClosed();
     final uri = _fileUri(fileId);
     try {
       final response =
@@ -494,6 +541,7 @@ class MediaForgeClient {
 
   /// Deletes a file from Cloudflare R2 CDN and releases storage quota.
   Future<void> deleteFile(String fileId) async {
+    _ensureNotClosed();
     final uri = _fileUri(fileId);
     try {
       final response =
@@ -534,6 +582,7 @@ class MediaForgeClient {
     Iterable<String> fileIds, {
     int concurrency = 4,
   }) async {
+    _ensureNotClosed();
     if (concurrency < 1) {
       throw ArgumentError.value(concurrency, 'concurrency', 'must be >= 1');
     }
@@ -572,11 +621,27 @@ class MediaForgeClient {
     );
   }
 
-  /// Closes the HTTP client if owned by this instance.
+  /// Closes the HTTP client if owned by this instance, aborts active multipart
+  /// requests, and prevents new exchanges.
   void close() {
+    _isClosed = true;
     if (_ownsClient) {
       _httpClient.close();
+      for (final client in _activeMultipartClients.toList()) {
+        try {
+          client.close();
+        } catch (_) {}
+      }
+      _activeMultipartClients.clear();
     }
+    for (final req in _activeRequests.toList()) {
+      try {
+        req.cancel(
+          const NetworkException('MediaForgeClient was closed.', code: 'client_closed'),
+        );
+      } catch (_) {}
+    }
+    _activeRequests.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -803,24 +868,53 @@ class _ProgressReporter {
   }
 }
 
-/// Wraps an [http.MultipartRequest] to report byte-level progress.
+/// Wraps an [http.MultipartRequest] to report byte-level progress and enable
+/// request-level cancellation without closing shared caller HTTP clients.
 ///
-/// The body is re-chunked into [chunkSize] pieces and emitted from an
-/// `async*` generator so that transport backpressure (socket buffer full)
-/// pauses emission. Without this, `MultipartFile.fromBytes` yields the whole
-/// file as a single chunk and progress jumps from 0% to 100% instantly.
-class _TrackedMultipartRequest extends http.BaseRequest {
+/// The body is re-chunked into [chunkSize] pieces and emitted with backpressure.
+/// If cancelled via [cancel], the byte stream terminates immediately with an error,
+/// instructing the transport to abort the socket transfer.
+class _CancellableTrackedMultipartRequest extends http.BaseRequest {
   /// Size of each emitted body chunk.
   static const int chunkSize = 64 * 1024;
 
   final http.MultipartRequest _original;
-  final _ProgressReporter _reporter;
+  final _ProgressReporter? _reporter;
 
-  _TrackedMultipartRequest(this._original, this._reporter)
+  bool _isCancelled = false;
+
+  /// Whether this request has been cancelled.
+  bool get isCancelled => _isCancelled;
+
+  StreamSubscription<List<int>>? _sourceSubscription;
+  StreamController<List<int>>? _controller;
+
+  _CancellableTrackedMultipartRequest(this._original, [this._reporter])
       : super(_original.method, _original.url);
 
   @override
   int get contentLength => _original.contentLength;
+
+  /// Cancels the multipart request stream, aborting transport transfer.
+  void cancel([Object? error]) {
+    if (_isCancelled) return;
+    _isCancelled = true;
+    final err = error ?? TimeoutException('Request was cancelled');
+
+    try {
+      _sourceSubscription?.cancel();
+    } catch (_) {}
+
+    final ctrl = _controller;
+    if (ctrl != null && !ctrl.isClosed) {
+      try {
+        ctrl.addError(err);
+      } catch (_) {}
+      try {
+        ctrl.close();
+      } catch (_) {}
+    }
+  }
 
   @override
   http.ByteStream finalize() {
@@ -830,30 +924,75 @@ class _TrackedMultipartRequest extends http.BaseRequest {
     headers.addAll(_original.headers);
     super.finalize();
 
-    _reporter.start(contentLength);
-    return http.ByteStream(_track(stream));
-  }
+    _reporter?.start(contentLength);
 
-  Stream<List<int>> _track(Stream<List<int>> source) async* {
-    var sent = 0;
-    await for (final chunk in source) {
-      if (chunk.length <= chunkSize) {
-        yield chunk;
-        sent += chunk.length;
-        _reporter.buffering(sent);
-        continue;
-      }
-      for (var offset = 0; offset < chunk.length; offset += chunkSize) {
-        final end = math.min(offset + chunkSize, chunk.length);
-        yield chunk is Uint8List
-            ? Uint8List.sublistView(chunk, offset, end)
-            : chunk.sublist(offset, end);
-        sent += end - offset;
-        _reporter.buffering(sent);
-      }
+    final controller = StreamController<List<int>>(sync: true);
+    _controller = controller;
+
+    if (_isCancelled) {
+      controller.addError(
+        TimeoutException('Request was cancelled before transmission'),
+      );
+      controller.close();
+      return http.ByteStream(controller.stream);
     }
-    // Every byte has been handed to the transport; the server is now
-    // receiving/processing. Report honestly instead of claiming 100%.
-    _reporter.edgeProcessing(sent);
+
+    var sent = 0;
+
+    controller.onListen = () {
+      _sourceSubscription = stream.listen(
+        (chunk) {
+          if (_isCancelled || controller.isClosed) return;
+
+          if (chunk.length <= chunkSize) {
+            controller.add(chunk);
+            sent += chunk.length;
+            _reporter?.buffering(sent);
+            return;
+          }
+
+          for (var offset = 0; offset < chunk.length; offset += chunkSize) {
+            if (_isCancelled || controller.isClosed) return;
+            final end = math.min(offset + chunkSize, chunk.length);
+            final slice = chunk is Uint8List
+                ? Uint8List.sublistView(chunk, offset, end)
+                : chunk.sublist(offset, end);
+            controller.add(slice);
+            sent += end - offset;
+            _reporter?.buffering(sent);
+          }
+        },
+        onError: (Object e, StackTrace st) {
+          if (!_isCancelled && !controller.isClosed) {
+            controller.addError(e, st);
+          }
+        },
+        onDone: () {
+          if (!_isCancelled && !controller.isClosed) {
+            _reporter?.edgeProcessing(sent);
+            controller.close();
+          }
+        },
+        cancelOnError: true,
+      );
+
+      controller.onPause = () {
+        try {
+          _sourceSubscription?.pause();
+        } catch (_) {}
+      };
+      controller.onResume = () {
+        try {
+          _sourceSubscription?.resume();
+        } catch (_) {}
+      };
+      controller.onCancel = () {
+        try {
+          _sourceSubscription?.cancel();
+        } catch (_) {}
+      };
+    };
+
+    return http.ByteStream(controller.stream);
   }
 }
