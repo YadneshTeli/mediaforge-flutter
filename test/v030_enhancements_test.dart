@@ -18,7 +18,9 @@ void main() {
   });
 
   group('v0.3.0 Architecture & Ergonomics', () {
-    test('MediaForge.local provides pure on-device methods with zero auth (Suggestion 3.1)', () async {
+    test(
+        'MediaForge.local provides pure on-device methods with zero auth (Suggestion 3.1)',
+        () async {
       final input = FixtureHelper.createJpegWithExif(width: 120, height: 120);
 
       // Verify no init was called
@@ -42,13 +44,16 @@ void main() {
       );
       expect(processed, isNotEmpty);
 
-      final pipelineRes = await MediaForge.local.pipeline(input)
+      final pipelineRes = await MediaForge.local
+          .pipeline(input)
           .resize(width: 50, height: 50)
           .execute();
       expect(pipelineRes.width, equals(50));
     });
 
-    test('MediaForge.cloud namespaces developer services and requires init (Suggestion 3.1)', () async {
+    test(
+        'MediaForge.cloud namespaces developer services and requires init (Suggestion 3.1)',
+        () async {
       expect(
         () => MediaForge.cloud.getUsage(),
         throwsA(isA<AuthException>()),
@@ -83,7 +88,9 @@ void main() {
       expect(usage.plan, equals('forge'));
     });
 
-    test('Pipeline directly chains into .upload() in one fluent statement (Suggestion 2.2)', () async {
+    test(
+        'Pipeline directly chains into .upload() in one fluent statement (Suggestion 2.2)',
+        () async {
       final input = FixtureHelper.createJpegWithExif(width: 150, height: 150);
 
       final mockHttp = MockClient((request) async {
@@ -120,11 +127,14 @@ void main() {
           .upload(filename: 'clean.jpg');
 
       expect(uploadResult.fileId, equals('file-pipeline-upload-1'));
-      expect(uploadResult.cdnUrl, equals('https://cdn.mediaforge.tech/u/clean.jpg'));
+      expect(uploadResult.cdnUrl,
+          equals('https://cdn.mediaforge.tech/u/clean.jpg'));
       expect(uploadResult.width, equals(80));
     });
 
-    test('Pipeline execution in background isolate works on supported platforms (Suggestion 2.3)', () async {
+    test(
+        'Pipeline execution in background isolate works on supported platforms (Suggestion 2.3)',
+        () async {
       final input = FixtureHelper.createJpeg(width: 100, height: 100);
 
       // Force background isolate execution
@@ -137,12 +147,15 @@ void main() {
       expect(result.bytes, isNotEmpty);
     });
 
-    test('File-based operations read, strip, and upload files without OOM (Suggestion 2.1)', () async {
+    test(
+        'File-based operations read, strip, and upload files without OOM (Suggestion 2.1)',
+        () async {
       final tempDir = await Directory.systemTemp.createTemp('mediaforge_test_');
       try {
         final imageFile = File('${tempDir.path}/sample.jpg');
         final cleanFile = File('${tempDir.path}/clean.jpg');
-        final rawBytes = FixtureHelper.createJpegWithExif(width: 100, height: 100);
+        final rawBytes =
+            FixtureHelper.createJpegWithExif(width: 100, height: 100);
         await imageFile.writeAsBytes(rawBytes);
 
         // 1. readMetadataFile
@@ -150,7 +163,8 @@ void main() {
         expect(metadata.isEmpty, isFalse);
 
         // Also via local namespace
-        final localMetadata = await MediaForge.local.readMetadataFile(imageFile);
+        final localMetadata =
+            await MediaForge.local.readMetadataFile(imageFile);
         expect(localMetadata.isEmpty, isFalse);
 
         // 2. stripMetadataFile
@@ -159,7 +173,8 @@ void main() {
           destinationFile: cleanFile,
         );
         expect(cleanFile.existsSync(), isTrue);
-        final isClean = await MediaForge.verifyClean(await (stripped as File).readAsBytes());
+        final isClean = await MediaForge.verifyClean(
+            await (stripped as File).readAsBytes());
         expect(isClean, isTrue);
 
         // 3. uploadFile

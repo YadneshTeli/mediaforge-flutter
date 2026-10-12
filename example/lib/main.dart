@@ -62,7 +62,8 @@ void main() async {
     ),
   );
   print('Processed: ${processed.length} bytes');
-  print('Savings: ${((1 - processed.length / imageBytes.length) * 100).round()}%');
+  print(
+      'Savings: ${((1 - processed.length / imageBytes.length) * 100).round()}%');
 
   // ---- 4. Pipeline API ----
   print('\n--- Pipeline API ---');
@@ -85,7 +86,8 @@ void main() async {
   print('\n--- Developer Cloud API & CDN Upload ---');
   final apiKey = Platform.environment['MEDIAFORGE_API_KEY'];
   if (apiKey == null || apiKey.isEmpty) {
-    print('Set MEDIAFORGE_API_KEY environment variable to test CDN upload and cloud features.');
+    print(
+        'Set MEDIAFORGE_API_KEY environment variable to test CDN upload and cloud features.');
     return;
   }
 
@@ -112,5 +114,6 @@ void main() async {
   // Query remaining quotas
   final usage = await MediaForge.getUsage();
   print('Operations Used: ${usage.operationsUsed} / ${usage.operationsLimit}');
-  print('Storage Used: ${usage.storageUsedBytes} / ${usage.storageLimitBytes} bytes');
+  print(
+      'Storage Used: ${usage.storageUsedBytes} / ${usage.storageLimitBytes} bytes');
 }

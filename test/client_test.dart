@@ -105,9 +105,21 @@ void main() {
       expect(stripped, equals(cleanJpg));
     });
 
-    test('uploadToCdn() uploads with progress and returns MediaForgeFile', () async {
+    test('uploadToCdn() uploads with progress and returns MediaForgeFile',
+        () async {
       final fakePng = Uint8List.fromList([
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x89,
+        0x50,
+        0x4E,
+        0x47,
+        0x0D,
+        0x0A,
+        0x1A,
+        0x0A,
+        0x00,
+        0x00,
+        0x00,
+        0x0D,
       ]);
 
       final progressUpdates = <double>[];
@@ -150,7 +162,8 @@ void main() {
       );
 
       expect(uploaded.id, equals('file-9988'));
-      expect(uploaded.cdnUrl, equals('https://cdn.mediaforge.tech/u/file-9988.png'));
+      expect(uploaded.cdnUrl,
+          equals('https://cdn.mediaforge.tech/u/file-9988.png'));
       expect(uploaded.width, equals(64));
       expect(progressUpdates, isNotEmpty);
       expect(progressUpdates.last, equals(1.0));
@@ -189,7 +202,8 @@ void main() {
 
     test('listFiles() and deleteFile() manage remote assets', () async {
       final mock = MockClient((request) async {
-        if (request.method == 'GET' && request.url.path == '/v1/developer/files') {
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/developer/files') {
           expect(request.url.queryParameters['page'], equals('1'));
           expect(request.url.queryParameters['limit'], equals('10'));
           return http.Response(
@@ -215,7 +229,8 @@ void main() {
           );
         }
 
-        if (request.method == 'GET' && request.url.path == '/v1/developer/files/f-item-1') {
+        if (request.method == 'GET' &&
+            request.url.path == '/v1/developer/files/f-item-1') {
           return http.Response(
             jsonEncode({
               'file': {
@@ -234,7 +249,8 @@ void main() {
           );
         }
 
-        if (request.method == 'DELETE' && request.url.path == '/v1/developer/files/f-item-1') {
+        if (request.method == 'DELETE' &&
+            request.url.path == '/v1/developer/files/f-item-1') {
           return http.Response('', 204);
         }
 
@@ -396,7 +412,9 @@ void main() {
         );
       });
 
-      test('Nginx HTML 413 error page is sanitized into safe PlanLimitException (Issue 1.1)', () async {
+      test(
+          'Nginx HTML 413 error page is sanitized into safe PlanLimitException (Issue 1.1)',
+          () async {
         const rawNginxHtml = '''
 <html>
 <head><title>413 Request Entity Too Large</title></head>
@@ -429,7 +447,9 @@ void main() {
         }
       });
 
-      test('Nginx HTML 502 Bad Gateway is sanitized into safe NetworkException (Issue 1.1)', () async {
+      test(
+          'Nginx HTML 502 Bad Gateway is sanitized into safe NetworkException (Issue 1.1)',
+          () async {
         const raw502Html = '<html><body>502 Bad Gateway</body></html>';
         final mock = MockClient((r) async => http.Response(
               raw502Html,
@@ -448,8 +468,10 @@ void main() {
         }
       });
 
-      test('Cloudflare/WAF HTML 403 maps to edge_forbidden NetworkException', () async {
-        const raw403Html = '<html><head><title>Access Denied</title></head></html>';
+      test('Cloudflare/WAF HTML 403 maps to edge_forbidden NetworkException',
+          () async {
+        const raw403Html =
+            '<html><head><title>Access Denied</title></head></html>';
         final mock = MockClient((r) async => http.Response(
               raw403Html,
               403,
@@ -468,9 +490,12 @@ void main() {
     });
 
     group('v0.3.0 Client Features', () {
-      test('client-side pre-flight size validation throws immediately (Issue 1.4)', () async {
+      test(
+          'client-side pre-flight size validation throws immediately (Issue 1.4)',
+          () async {
         final mock = MockClient((r) async {
-          fail('Network request must not be triggered when payload exceeds limit');
+          fail(
+              'Network request must not be triggered when payload exceeds limit');
         });
 
         final client = MediaForgeClient(
@@ -492,7 +517,9 @@ void main() {
         }
       });
 
-      test('multi-phase upload progress emits buffering, edgeProcessing, and completed (Issue 1.2)', () async {
+      test(
+          'multi-phase upload progress emits buffering, edgeProcessing, and completed (Issue 1.2)',
+          () async {
         final testPayload = Uint8List(128 * 1024); // 128 KB
         final phases = <UploadPhase>[];
         final legacyValues = <double>[];
@@ -535,7 +562,9 @@ void main() {
         expect(legacyValues.last, equals(1.0));
       });
 
-      test('uploadStreamToCdn streams without full memory buffering (Suggestion 2.1)', () async {
+      test(
+          'uploadStreamToCdn streams without full memory buffering (Suggestion 2.1)',
+          () async {
         final chunks = [
           Uint8List.fromList([1, 2, 3, 4]),
           Uint8List.fromList([5, 6, 7, 8]),
@@ -576,9 +605,12 @@ void main() {
         expect(file.sizeBytes, equals(8));
       });
 
-      test('deleteFiles runs batch deletion with concurrency and handles partial failures (Suggestion 2.4)', () async {
+      test(
+          'deleteFiles runs batch deletion with concurrency and handles partial failures (Suggestion 2.4)',
+          () async {
         final mock = MockClient((request) async {
-          if (request.url.path.endsWith('/good-1') || request.url.path.endsWith('/good-2')) {
+          if (request.url.path.endsWith('/good-1') ||
+              request.url.path.endsWith('/good-2')) {
             return http.Response('', 204);
           }
           if (request.url.path.endsWith('/bad-1')) {
@@ -589,7 +621,8 @@ void main() {
 
         final client = MediaForgeClient(apiKey: testApiKey, httpClient: mock);
 
-        final result = await client.deleteFiles(['good-1', 'bad-1', 'good-2'], concurrency: 2);
+        final result = await client
+            .deleteFiles(['good-1', 'bad-1', 'good-2'], concurrency: 2);
 
         expect(result.deleted, containsAll(['good-1', 'good-2']));
         expect(result.failed.containsKey('bad-1'), isTrue);

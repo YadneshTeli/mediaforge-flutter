@@ -37,7 +37,7 @@ class FixtureHelper {
   }) {
     final image = img.Image(width: width, height: height);
     img.fill(image, color: img.ColorRgb8(128, 128, 128));
-    
+
     // Populate EXIF tags
     image.exif.imageIfd['Make'] = make;
     image.exif.imageIfd['Model'] = model;
@@ -45,7 +45,7 @@ class FixtureHelper {
     if (dateTimeOriginal != null) {
       image.exif.exifIfd['DateTimeOriginal'] = dateTimeOriginal;
     }
-    
+
     return Uint8List.fromList(img.encodeJpg(image));
   }
 

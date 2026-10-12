@@ -27,7 +27,9 @@ void main() {
       expect(hasMeta, isFalse);
     });
 
-    test('pipeline with no steps returns original bytes wrapped in PipelineResult', () async {
+    test(
+        'pipeline with no steps returns original bytes wrapped in PipelineResult',
+        () async {
       final input = FixtureHelper.createJpeg(width: 120, height: 60);
 
       final result = await ProcessingPipeline(input).execute();

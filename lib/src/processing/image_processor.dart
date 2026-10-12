@@ -58,7 +58,8 @@ class ImageProcessor {
 
     try {
       final image = _decode(bytes);
-      final resized = _applyResize(image, width, height, mode, maintainAspectRatio);
+      final resized =
+          _applyResize(image, width, height, mode, maintainAspectRatio);
       return _encodeAsOriginalFormat(resized, bytes);
     } on ProcessingException {
       rethrow;
@@ -140,14 +141,23 @@ class ImageProcessor {
     if (bytes.length < 16) return null;
 
     // 1. PNG: IHDR chunk at bytes 12..23
-    if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+    if (bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
       if (bytes.length >= 24 &&
           bytes[12] == 0x49 &&
           bytes[13] == 0x48 &&
           bytes[14] == 0x44 &&
           bytes[15] == 0x52) {
-        final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-        final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+        final w = (bytes[16] << 24) |
+            (bytes[17] << 16) |
+            (bytes[18] << 8) |
+            bytes[19];
+        final h = (bytes[20] << 24) |
+            (bytes[21] << 16) |
+            (bytes[22] << 8) |
+            bytes[23];
         if (w > 0 && h > 0) return ImageDimensions(width: w, height: h);
       }
     }
@@ -191,8 +201,14 @@ class ImageProcessor {
     }
 
     // 3. WebP: RIFF .... WEBP
-    if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
-        bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
+    if (bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
       if (bytes.length >= 30) {
         final fourCc = String.fromCharCodes(bytes.sublist(12, 16));
         if (fourCc == 'VP8X' && bytes.length >= 30) {
@@ -204,7 +220,10 @@ class ImageProcessor {
           final h = (bytes[28] | (bytes[29] << 8)) & 0x3fff;
           if (w > 0 && h > 0) return ImageDimensions(width: w, height: h);
         } else if (fourCc == 'VP8L' && bytes.length >= 26) {
-          final val = bytes[21] | (bytes[22] << 8) | (bytes[23] << 16) | (bytes[24] << 24);
+          final val = bytes[21] |
+              (bytes[22] << 8) |
+              (bytes[23] << 16) |
+              (bytes[24] << 24);
           final w = 1 + (val & 0x3fff);
           final h = 1 + ((val >> 14) & 0x3fff);
           if (w > 0 && h > 0) return ImageDimensions(width: w, height: h);
@@ -244,7 +263,8 @@ class ImageProcessor {
     return switch (mode) {
       ResizeMode.fit => () {
           if (targetWidth > 0 && targetHeight > 0 && maintainAspectRatio) {
-            final scale = min(targetWidth / image.width, targetHeight / image.height);
+            final scale =
+                min(targetWidth / image.width, targetHeight / image.height);
             final rw = max(1, (image.width * scale).round());
             final rh = max(1, (image.height * scale).round());
             return img.copyResize(
@@ -263,8 +283,10 @@ class ImageProcessor {
             maintainAspect: maintainAspectRatio,
           );
         }(),
-      ResizeMode.cover => _resizeCover(image, targetWidth, targetHeight, interpolation),
-      ResizeMode.contain => _resizeContain(image, targetWidth, targetHeight, interpolation),
+      ResizeMode.cover =>
+        _resizeCover(image, targetWidth, targetHeight, interpolation),
+      ResizeMode.contain =>
+        _resizeContain(image, targetWidth, targetHeight, interpolation),
       ResizeMode.fill => img.copyResize(
           image,
           width: targetWidth > 0 ? targetWidth : image.width,
@@ -327,7 +349,8 @@ class ImageProcessor {
     if (resized.width == w && resized.height == h) return resized;
 
     // Create canvas at target size and center the image (preserve channel count for transparency)
-    final canvas = img.Image(width: w, height: h, numChannels: image.numChannels);
+    final canvas =
+        img.Image(width: w, height: h, numChannels: image.numChannels);
     final offsetX = (w - resized.width) ~/ 2;
     final offsetY = (h - resized.height) ~/ 2;
 
@@ -341,7 +364,8 @@ class ImageProcessor {
     bool lossless = false,
   }) {
     final encoded = switch (format) {
-      ImageFormat.jpeg => img.encodeJpg(image, quality: lossless ? 100 : quality),
+      ImageFormat.jpeg =>
+        img.encodeJpg(image, quality: lossless ? 100 : quality),
       ImageFormat.png => img.encodePng(image),
       ImageFormat.webp => throw const ProcessingException(
           'Encoding to WebP is not supported by the pure-Dart on-device engine. '

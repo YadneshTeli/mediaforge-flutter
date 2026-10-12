@@ -111,7 +111,8 @@ void main() {
         client: customClient,
       );
 
-      final uploadResult = await MediaForge.upload(input, filename: 'facade.jpg');
+      final uploadResult =
+          await MediaForge.upload(input, filename: 'facade.jpg');
       expect(uploadResult.fileId, equals('file-facade-1'));
       expect(uploadResult.cdnUrl, contains('file-facade-1.jpg'));
 

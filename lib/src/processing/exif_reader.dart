@@ -66,10 +66,8 @@ class ExifReader {
           _extractString(tags, 'MakerNote SerialNumber'),
       lensModel: _extractString(tags, 'EXIF LensModel'),
       // Timestamps
-      dateTimeOriginal:
-          _extractDateTime(tags, 'EXIF DateTimeOriginal'),
-      dateTimeDigitized:
-          _extractDateTime(tags, 'EXIF DateTimeDigitized'),
+      dateTimeOriginal: _extractDateTime(tags, 'EXIF DateTimeOriginal'),
+      dateTimeDigitized: _extractDateTime(tags, 'EXIF DateTimeDigitized'),
       dateTimeModified: _extractDateTime(tags, 'Image DateTime'),
       // Software
       software: _extractString(tags, 'Image Software'),

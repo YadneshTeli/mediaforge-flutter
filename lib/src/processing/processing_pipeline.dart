@@ -66,8 +66,7 @@ class ProcessingPipeline {
   /// Whether [execute] will offload work to a background isolate.
   bool get willRunInIsolate =>
       supportsBackgroundIsolates &&
-      (_runInIsolate ??
-          _inputBytes.lengthInBytes > autoIsolateThresholdBytes);
+      (_runInIsolate ?? _inputBytes.lengthInBytes > autoIsolateThresholdBytes);
 
   /// Adds a metadata stripping step to the pipeline.
   ///
@@ -141,7 +140,6 @@ class ProcessingPipeline {
     }
     return _runSteps(input, steps, stripper, processor);
   }
-
 
   static Future<PipelineResult> _runSteps(
     Uint8List input,

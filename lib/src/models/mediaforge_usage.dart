@@ -56,12 +56,16 @@ class MediaForgeUsage {
 
   /// Deserializes [MediaForgeUsage] from backend JSON.
   factory MediaForgeUsage.fromJson(Map<String, dynamic> json) {
-    final ops = (json['operations'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final storage = (json['storage'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final bandwidth = (json['bandwidth'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final ops =
+        (json['operations'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final storage =
+        (json['storage'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final bandwidth =
+        (json['bandwidth'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final rawKeys = json['apiKeys'] ?? json['api_keys'];
     final keys = (rawKeys as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final features = (json['features'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final features =
+        (json['features'] as Map<String, dynamic>?) ?? <String, dynamic>{};
 
     final rawStorageUsed = storage['usedBytes'] ?? storage['used_bytes'];
     final rawStorageLimit = storage['limitBytes'] ?? storage['limit_bytes'];
@@ -95,8 +99,9 @@ class MediaForgeUsage {
       storageLimitBytes > 0 ? (storageUsedBytes / storageLimitBytes) : 0.0;
 
   /// Percentage of bandwidth allowance used (0.0 to 1.0+).
-  double get bandwidthRatio =>
-      bandwidthLimitBytes > 0 ? (bandwidthUsedBytes / bandwidthLimitBytes) : 0.0;
+  double get bandwidthRatio => bandwidthLimitBytes > 0
+      ? (bandwidthUsedBytes / bandwidthLimitBytes)
+      : 0.0;
 
   /// Whether the monthly operations limit has been reached or exceeded.
   bool get isOperationsExhausted =>

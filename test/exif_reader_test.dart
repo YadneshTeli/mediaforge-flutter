@@ -7,7 +7,8 @@ void main() {
   group('ExifReader', () {
     const reader = ExifReader();
 
-    test('clean image reports no metadata and returns empty ExifData', () async {
+    test('clean image reports no metadata and returns empty ExifData',
+        () async {
       final cleanJpeg = FixtureHelper.createJpeg();
       final hasMeta = await reader.hasMetadata(cleanJpeg);
       expect(hasMeta, isFalse);
@@ -18,7 +19,8 @@ void main() {
       expect(metadata.hasCameraInfo, isFalse);
     });
 
-    test('image with EXIF tags extracts camera and software metadata', () async {
+    test('image with EXIF tags extracts camera and software metadata',
+        () async {
       final exifJpeg = FixtureHelper.createJpegWithExif(
         make: 'MediaForgeCamera',
         model: 'TestForge-1',
@@ -32,7 +34,8 @@ void main() {
       expect(metadata.cameraMake, equals('MediaForgeCamera'));
       expect(metadata.cameraModel, equals('TestForge-1'));
       expect(metadata.software, equals('MediaForge SDK Test Suite'));
-      expect(metadata.dateTimeOriginal, equals(DateTime(2023, 8, 15, 14, 30, 0)));
+      expect(
+          metadata.dateTimeOriginal, equals(DateTime(2023, 8, 15, 14, 30, 0)));
     });
 
     test('corrupt image throws ProcessingException', () async {

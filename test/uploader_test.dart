@@ -52,12 +52,14 @@ void main() {
       });
 
       final config = MediaForgeConfig(apiKey: 'mf_test_validkey123');
-      final client = MediaForgeClient(apiKey: config.apiKey, httpClient: mockHttp);
+      final client =
+          MediaForgeClient(apiKey: config.apiKey, httpClient: mockHttp);
       final uploader = MediaForgeUploader(config, client: client);
 
       final result = await uploader.upload(image, filename: 'test.jpg');
       expect(result.fileId, equals('file-uploaded-1'));
-      expect(result.cdnUrl, equals('https://cdn.mediaforge.tech/u/file-uploaded-1.jpg'));
+      expect(result.cdnUrl,
+          equals('https://cdn.mediaforge.tech/u/file-uploaded-1.jpg'));
       expect(result.width, equals(100));
       expect(result.metadataStripped, isTrue);
     });
@@ -81,7 +83,9 @@ void main() {
       progress.dispose();
     });
 
-    test('UploadProgress automatically closes controller on complete() without leaking', () async {
+    test(
+        'UploadProgress automatically closes controller on complete() without leaking',
+        () async {
       final progress = UploadProgress();
       var streamClosed = false;
 

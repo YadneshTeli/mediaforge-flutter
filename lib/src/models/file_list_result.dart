@@ -39,7 +39,9 @@ class FileListResult {
     final totalCount = (rawTotal as num?)?.toInt();
     final pageNum = (json['page'] as num?)?.toInt();
     final limitNum = (json['limit'] as num?)?.toInt();
-    final nextCursor = (json['cursor'] ?? json['nextCursor'] ?? json['next_cursor']) as String?;
+    final nextCursor = (json['cursor'] ??
+        json['nextCursor'] ??
+        json['next_cursor']) as String?;
 
     return FileListResult(
       files: fileItems,

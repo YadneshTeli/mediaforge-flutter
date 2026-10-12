@@ -42,7 +42,8 @@ class ApiKeyDetails {
   bool get isTest => type == 'test';
 
   @override
-  String toString() => 'ApiKeyDetails(id: $id, type: $type, plan: $plan, prefix: $prefix)';
+  String toString() =>
+      'ApiKeyDetails(id: $id, type: $type, plan: $plan, prefix: $prefix)';
 }
 
 /// Health and connectivity status of the MediaForge Developer API.
@@ -84,9 +85,8 @@ class MediaForgeHealth {
   /// Deserializes [MediaForgeHealth] from JSON.
   factory MediaForgeHealth.fromJson(Map<String, dynamic> json) {
     final rawKey = json['apiKey'] ?? json['api_key'];
-    final keyDetails = rawKey is Map<String, dynamic>
-        ? ApiKeyDetails.fromJson(rawKey)
-        : null;
+    final keyDetails =
+        rawKey is Map<String, dynamic> ? ApiKeyDetails.fromJson(rawKey) : null;
 
     final rawTs = json['timestamp'];
     final parsedTs = rawTs != null

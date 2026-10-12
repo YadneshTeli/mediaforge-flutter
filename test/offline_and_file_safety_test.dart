@@ -3,7 +3,8 @@ import 'dart:typed_data';
 
 import 'package:mediaforge_flutter/local.dart';
 import 'package:mediaforge_flutter/src/io/file_support_stub.dart' as stub_file;
-import 'package:mediaforge_flutter/src/io/local_file_support_stub.dart' as stub_local;
+import 'package:mediaforge_flutter/src/io/local_file_support_stub.dart'
+    as stub_local;
 import 'package:test/test.dart';
 
 import 'fixtures/fixture_helper.dart';
@@ -36,7 +37,8 @@ void main() {
       final tempDir = await Directory.systemTemp.createTemp('mf_local_file_');
       try {
         final file = File('${tempDir.path}/test.jpg');
-        final rawBytes = FixtureHelper.createJpegWithExif(width: 80, height: 80);
+        final rawBytes =
+            FixtureHelper.createJpegWithExif(width: 80, height: 80);
         await file.writeAsBytes(rawBytes);
 
         final meta = await LocalFileSupport.readMetadataFile(file);
@@ -55,11 +57,14 @@ void main() {
   });
 
   group('File Strip Safety & Bounded Memory', () {
-    test('Enforces maximum file size limit and preserves original file on rejection', () async {
+    test(
+        'Enforces maximum file size limit and preserves original file on rejection',
+        () async {
       final tempDir = await Directory.systemTemp.createTemp('mf_size_limit_');
       try {
         final file = File('${tempDir.path}/large.jpg');
-        final rawBytes = FixtureHelper.createJpegWithExif(width: 80, height: 80);
+        final rawBytes =
+            FixtureHelper.createJpegWithExif(width: 80, height: 80);
         await file.writeAsBytes(rawBytes);
 
         // Enforce a tiny size limit to trigger file_too_large check
@@ -83,11 +88,13 @@ void main() {
       }
     });
 
-    test('In-place stripping preserves original file when write fails', () async {
+    test('In-place stripping preserves original file when write fails',
+        () async {
       final tempDir = await Directory.systemTemp.createTemp('mf_inplace_');
       try {
         final file = File('${tempDir.path}/source.jpg');
-        final rawBytes = FixtureHelper.createJpegWithExif(width: 80, height: 80);
+        final rawBytes =
+            FixtureHelper.createJpegWithExif(width: 80, height: 80);
         await file.writeAsBytes(rawBytes);
 
         // Non-existent file throws file_not_found before altering anything
@@ -109,11 +116,13 @@ void main() {
       }
     });
 
-    test('Handles files with spaces without percent-encoding in temp paths', () async {
+    test('Handles files with spaces without percent-encoding in temp paths',
+        () async {
       final tempDir = await Directory.systemTemp.createTemp('mf spaces dir_');
       try {
         final file = File('${tempDir.path}/my sample photo.jpg');
-        final rawBytes = FixtureHelper.createJpegWithExif(width: 80, height: 80);
+        final rawBytes =
+            FixtureHelper.createJpegWithExif(width: 80, height: 80);
         await file.writeAsBytes(rawBytes);
 
         final cleanFile = await LocalFileSupport.stripMetadataFile(file);
@@ -127,9 +136,11 @@ void main() {
   });
 
   group('Web Platform Stubs Async Error Delivery', () {
-    test('FileSupport web stub emits errors through declared Futures', () async {
+    test('FileSupport web stub emits errors through declared Futures',
+        () async {
       var readFutureHandled = false;
-      await stub_file.FileSupport.readMetadataFile('dummy').catchError((Object e) {
+      await stub_file.FileSupport.readMetadataFile('dummy')
+          .catchError((Object e) {
         readFutureHandled = true;
         expect(e, isA<UnsupportedError>());
         return const ExifData();
@@ -137,7 +148,8 @@ void main() {
       expect(readFutureHandled, isTrue);
 
       var stripFutureHandled = false;
-      await stub_file.FileSupport.stripMetadataFile('dummy').catchError((Object e) {
+      await stub_file.FileSupport.stripMetadataFile('dummy')
+          .catchError((Object e) {
         stripFutureHandled = true;
         expect(e, isA<UnsupportedError>());
         return 'fallback';
@@ -150,9 +162,11 @@ void main() {
       );
     });
 
-    test('LocalFileSupport web stub emits errors through declared Futures', () async {
+    test('LocalFileSupport web stub emits errors through declared Futures',
+        () async {
       var readFutureHandled = false;
-      await stub_local.LocalFileSupport.readMetadataFile('dummy').catchError((Object e) {
+      await stub_local.LocalFileSupport.readMetadataFile('dummy')
+          .catchError((Object e) {
         readFutureHandled = true;
         expect(e, isA<UnsupportedError>());
         return const ExifData();
@@ -160,7 +174,8 @@ void main() {
       expect(readFutureHandled, isTrue);
 
       var stripFutureHandled = false;
-      await stub_local.LocalFileSupport.stripMetadataFile('dummy').catchError((Object e) {
+      await stub_local.LocalFileSupport.stripMetadataFile('dummy')
+          .catchError((Object e) {
         stripFutureHandled = true;
         expect(e, isA<UnsupportedError>());
         return 'fallback';

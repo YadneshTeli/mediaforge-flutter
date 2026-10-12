@@ -31,7 +31,8 @@ void main() {
       expect(file.id, equals('file-123'));
       expect(file.filename, equals('photo.webp'));
       expect(file.originalFilename, equals('raw.jpg'));
-      expect(file.cdnUrl, equals('https://cdn.mediaforge.tech/u/file-123.webp'));
+      expect(
+          file.cdnUrl, equals('https://cdn.mediaforge.tech/u/file-123.webp'));
       expect(file.sizeBytes, equals(1024));
       expect(file.width, equals(800));
       expect(file.height, equals(600));
@@ -81,7 +82,8 @@ void main() {
       expect(usage.isOperationsExhausted, isFalse);
     });
 
-    test('MediaForgeHealth parses authenticated and unauthenticated responses', () {
+    test('MediaForgeHealth parses authenticated and unauthenticated responses',
+        () {
       final unauthJson = {
         'status': 'ok',
         'service': 'MediaForge Developer API',
@@ -115,7 +117,8 @@ void main() {
       expect(healthAuth.apiKey?.isLive, isTrue);
     });
 
-    test('FileListResult handles both total pagination and cursor pagination', () {
+    test('FileListResult handles both total pagination and cursor pagination',
+        () {
       final json = {
         'files': [
           {
@@ -142,7 +145,8 @@ void main() {
       expect(result.hasMore, isTrue);
     });
 
-    test('UploadResult interoperates with MediaForgeFile and wrapped responses', () {
+    test('UploadResult interoperates with MediaForgeFile and wrapped responses',
+        () {
       final wrappedJson = {
         'file': {
           'id': 'f-999',

@@ -7,7 +7,8 @@ void main() {
   group('ImageProcessor', () {
     const processor = ImageProcessor();
 
-    test('getImageDimensions returns correct dimensions for JPEG and PNG', () async {
+    test('getImageDimensions returns correct dimensions for JPEG and PNG',
+        () async {
       final jpeg = FixtureHelper.createJpeg(width: 150, height: 90);
       final jpegDims = await processor.getImageDimensions(jpeg);
       expect(jpegDims.width, equals(150));
@@ -56,7 +57,8 @@ void main() {
       expect(MimeType.fromBytes(jpegAgain), equals('image/jpeg'));
     });
 
-    test('convert to WebP throws ProcessingException unsupportedFormat', () async {
+    test('convert to WebP throws ProcessingException unsupportedFormat',
+        () async {
       final jpeg = FixtureHelper.createJpeg(width: 100, height: 100);
       expect(
         () => processor.convert(jpeg, format: ImageFormat.webp),

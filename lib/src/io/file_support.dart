@@ -5,5 +5,4 @@
 /// issues. On web platforms, stub methods throw an [UnsupportedError].
 library;
 
-export 'file_support_stub.dart'
-    if (dart.library.io) 'file_support_io.dart';
+export 'file_support_stub.dart' if (dart.library.io) 'file_support_io.dart';

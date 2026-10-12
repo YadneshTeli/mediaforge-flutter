@@ -66,10 +66,10 @@ print('Has sensitive data: ${metadata.hasSensitiveData}');
 ### Strip Metadata On-Device
 
 ```dart
-// Strip ALL metadata locally
+// Strip ALL metadata locally (100% lossless for JPEG & WebP: zero re-encode)
 final cleanBytes = await MediaForge.stripMetadata(imageBytes);
 
-// Verify stripping worked (unique to MediaForge)
+// Deep container verification (scans raw headers for EXIF, XMP, IPTC, COM, PNG chunks)
 final isClean = await MediaForge.verifyClean(cleanBytes);
 print('Clean: $isClean'); // true
 
@@ -100,10 +100,11 @@ final processed = await MediaForge.process(imageBytes, ProcessingOptions(
 ));
 ```
 
-> **Format notes:** the on-device engine encodes JPEG and PNG output. WebP is
-> fully supported as *input* — metadata stripping on WebP is lossless (RIFF
-> container chunk removal, no re-encode) — but pure-Dart WebP *encoding* is not
-> available. For WebP output, use cloud processing.
+> **Lossless Stripping & Format notes:** Metadata stripping on both **JPEG and WebP**
+> is 100% lossless at the byte level (`APP1`/`APP13`/`COM` segments and RIFF container
+> chunks are stripped directly without decoding or re-encoding pixels, preserving exact image quality).
+> For image resizing and compression, the on-device engine encodes JPEG and PNG output.
+> Pure-Dart WebP *encoding* is not available; for WebP output, use cloud processing.
 
 ### Processing Pipeline (Chainable & Background Isolates)
 
@@ -323,10 +324,10 @@ try {
 
 Exception types:
 
-- `ProcessingException` — corrupt file, unsupported format, too large
+- `ProcessingException` — corrupt file, unsupported format, file exceeds local 50MB ceiling
 - `AuthException` — missing, invalid, or revoked API key
-- `PlanLimitException` — storage or monthly operation limit exceeded
-- `NetworkException` — connectivity, timeout, HTTP 429 rate limit, 5xx server errors
+- `PlanLimitException` — storage or monthly operation limit exceeded, pre-flight payload exceeds `maxUploadBytes`
+- `NetworkException` — connectivity, timeout, HTTP 429 rate limit, 5xx server errors, edge HTML errors, malformed responses
 
 ## Privacy Architecture
 

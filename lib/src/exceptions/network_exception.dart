@@ -56,7 +56,9 @@ class NetworkException extends MediaForgeException {
     final fallback = switch (statusCode) {
       429 => 'Too many requests. Slow down and try again.',
       500 => 'MediaForge server error. We are looking into it.',
-      502 || 503 => 'MediaForge service temporarily unavailable. Try again shortly.',
+      502 ||
+      503 =>
+        'MediaForge service temporarily unavailable. Try again shortly.',
       _ => 'HTTP error $statusCode',
     };
     final message = (body != null && body.isNotEmpty) ? body : fallback;

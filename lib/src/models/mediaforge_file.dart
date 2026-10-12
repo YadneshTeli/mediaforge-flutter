@@ -68,19 +68,26 @@ class MediaForgeFile {
     return MediaForgeFile(
       id: (json['id'] ?? json['file_id'] ?? json['fileId']) as String,
       filename: (json['filename'] ?? '') as String,
-      originalFilename: (json['originalFilename'] ?? json['original_filename']) as String?,
+      originalFilename:
+          (json['originalFilename'] ?? json['original_filename']) as String?,
       cdnUrl: (json['cdnUrl'] ?? json['cdn_url'] ?? '') as String,
-      sizeBytes: ((json['sizeBytes'] ?? json['size_bytes']) as num?)?.toInt() ?? 0,
+      sizeBytes:
+          ((json['sizeBytes'] ?? json['size_bytes']) as num?)?.toInt() ?? 0,
       mimeType: (json['mimeType'] ?? json['mime_type'] ?? '') as String,
       format: (json['format'] ?? '') as String,
       width: (json['width'] as num?)?.toInt(),
       height: (json['height'] as num?)?.toInt(),
-      metadataStripped: (json['metadataStripped'] ?? json['metadata_stripped'] ?? true) as bool,
-      cdnServingEnabled: (json['cdnServingEnabled'] ?? json['cdn_serving_enabled'] ?? true) as bool,
+      metadataStripped: (json['metadataStripped'] ??
+          json['metadata_stripped'] ??
+          true) as bool,
+      cdnServingEnabled: (json['cdnServingEnabled'] ??
+          json['cdn_serving_enabled'] ??
+          true) as bool,
       createdAt: rawCreatedAt != null
           ? DateTime.parse(rawCreatedAt as String)
           : DateTime.now().toUtc(),
-      updatedAt: rawUpdatedAt != null ? DateTime.parse(rawUpdatedAt as String) : null,
+      updatedAt:
+          rawUpdatedAt != null ? DateTime.parse(rawUpdatedAt as String) : null,
     );
   }
 
@@ -102,8 +109,9 @@ class MediaForgeFile {
       };
 
   /// Aspect ratio (width / height), or null if dimensions are unavailable.
-  double? get aspectRatio =>
-      (width != null && height != null && height! > 0) ? width! / height! : null;
+  double? get aspectRatio => (width != null && height != null && height! > 0)
+      ? width! / height!
+      : null;
 
   /// Markdown image embed snippet.
   String get markdownEmbed => '![$filename]($cdnUrl)';

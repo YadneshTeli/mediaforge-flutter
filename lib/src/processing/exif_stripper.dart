@@ -40,7 +40,8 @@ class ExifStripper {
   final ExifReader _reader;
 
   /// Creates a new [ExifStripper].
-  const ExifStripper({ExifReader reader = const ExifReader()}) : _reader = reader;
+  const ExifStripper({ExifReader reader = const ExifReader()})
+      : _reader = reader;
 
   /// Strips ALL metadata from the image [bytes].
   ///
@@ -115,7 +116,11 @@ class ExifStripper {
     bool stripAuthor = false,
   }) async {
     // If stripping everything, use the faster stripAll path
-    if (stripGps && stripCamera && stripTimestamps && stripSoftware && stripAuthor) {
+    if (stripGps &&
+        stripCamera &&
+        stripTimestamps &&
+        stripSoftware &&
+        stripAuthor) {
       return stripAll(bytes);
     }
 
@@ -123,7 +128,11 @@ class ExifStripper {
     // tag-level selective filtering. If any stripping is requested, all metadata
     // is removed; if no flags are set, return the original bytes unchanged.
     if (MimeType.fromBytes(bytes) == 'image/webp') {
-      if (!stripGps && !stripCamera && !stripTimestamps && !stripSoftware && !stripAuthor) {
+      if (!stripGps &&
+          !stripCamera &&
+          !stripTimestamps &&
+          !stripSoftware &&
+          !stripAuthor) {
         return bytes;
       }
       try {
@@ -166,7 +175,11 @@ class ExifStripper {
         if (stripSoftware) {
           image.textData!.remove('Software');
         }
-        if (stripGps || stripAuthor || stripCamera || stripTimestamps || stripSoftware) {
+        if (stripGps ||
+            stripAuthor ||
+            stripCamera ||
+            stripTimestamps ||
+            stripSoftware) {
           image.textData!.remove('XML:com.adobe.xmp');
           image.textData!.remove('Raw profile type xmp');
           image.textData!.remove('Comment');
@@ -301,7 +314,8 @@ class ExifStripper {
         strippedAny = true;
       } else if (fourCc == 'VP8X' && totalChunkLength >= 18) {
         // Extended WebP header: clear EXIF (bit 3 = 0x08) and XMP (bit 2 = 0x04) in flags byte
-        final chunkData = Uint8List.fromList(bytes.sublist(offset, offset + totalChunkLength));
+        final chunkData = Uint8List.fromList(
+            bytes.sublist(offset, offset + totalChunkLength));
         // Flag byte is at offset 8 within VP8X chunk data
         chunkData[8] = chunkData[8] & ~(0x08 | 0x04);
         out.add(chunkData);
@@ -455,8 +469,12 @@ class ExifStripper {
             (bytes[offset + 1] << 16) |
             (bytes[offset + 2] << 8) |
             bytes[offset + 3];
-        final type = String.fromCharCodes(bytes.sublist(offset + 4, offset + 8));
-        if (type == 'tEXt' || type == 'zTXt' || type == 'iTXt' || type == 'eXIf') {
+        final type =
+            String.fromCharCodes(bytes.sublist(offset + 4, offset + 8));
+        if (type == 'tEXt' ||
+            type == 'zTXt' ||
+            type == 'iTXt' ||
+            type == 'eXIf') {
           return true;
         }
         if (type == 'IEND') break;

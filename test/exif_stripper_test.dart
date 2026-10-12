@@ -33,11 +33,14 @@ void main() {
 
     test('corrupt image throws ProcessingException', () async {
       final corrupt = FixtureHelper.corruptBytes;
-      expect(() => stripper.stripAll(corrupt), throwsA(isA<ProcessingException>()));
+      expect(() => stripper.stripAll(corrupt),
+          throwsA(isA<ProcessingException>()));
     });
 
-    test('stripSelective removes targeted metadata while preserving untouched', () async {
-      final dirtyJpeg = FixtureHelper.createJpegWithExif(make: 'Nikon', model: 'D850');
+    test('stripSelective removes targeted metadata while preserving untouched',
+        () async {
+      final dirtyJpeg =
+          FixtureHelper.createJpegWithExif(make: 'Nikon', model: 'D850');
       final strippedGpsOnly = await stripper.stripSelective(
         dirtyJpeg,
         stripGps: true,
@@ -63,7 +66,9 @@ void main() {
       expect(isClean, isFalse);
     });
 
-    test('ExifData.isEmpty returns false if city, country, lensModel, or gpsAltitude are set', () {
+    test(
+        'ExifData.isEmpty returns false if city, country, lensModel, or gpsAltitude are set',
+        () {
       expect(const ExifData(city: 'Tokyo').isEmpty, isFalse);
       expect(const ExifData(country: 'Japan').isEmpty, isFalse);
       expect(const ExifData(lensModel: '50mm f/1.8').isEmpty, isFalse);

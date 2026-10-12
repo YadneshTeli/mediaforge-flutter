@@ -76,19 +76,28 @@ class UploadResult {
         : json;
 
     return UploadResult(
-      fileId: (fileMap['file_id'] ?? fileMap['fileId'] ?? fileMap['id']) as String,
+      fileId:
+          (fileMap['file_id'] ?? fileMap['fileId'] ?? fileMap['id']) as String,
       cdnUrl: (fileMap['cdn_url'] ?? fileMap['cdnUrl']) as String,
       filename: (fileMap['filename'] ?? '') as String,
-      originalFilename: (fileMap['original_filename'] ?? fileMap['originalFilename']) as String?,
-      sizeBytes: ((fileMap['size_bytes'] ?? fileMap['sizeBytes']) as num?)?.toInt() ?? 0,
+      originalFilename: (fileMap['original_filename'] ??
+          fileMap['originalFilename']) as String?,
+      sizeBytes:
+          ((fileMap['size_bytes'] ?? fileMap['sizeBytes']) as num?)?.toInt() ??
+              0,
       mimeType: (fileMap['mime_type'] ?? fileMap['mimeType'] ?? '') as String,
       format: (fileMap['format'] ?? '') as String,
       width: (fileMap['width'] as num?)?.toInt(),
       height: (fileMap['height'] as num?)?.toInt(),
-      metadataStripped: (fileMap['metadata_stripped'] ?? fileMap['metadataStripped'] ?? true) as bool,
-      cdnServingEnabled: (fileMap['cdn_serving_enabled'] ?? fileMap['cdnServingEnabled'] ?? true) as bool,
+      metadataStripped: (fileMap['metadata_stripped'] ??
+          fileMap['metadataStripped'] ??
+          true) as bool,
+      cdnServingEnabled: (fileMap['cdn_serving_enabled'] ??
+          fileMap['cdnServingEnabled'] ??
+          true) as bool,
       createdAt: DateTime.parse(
-        (fileMap['created_at'] ?? fileMap['uploadedAt'] ?? fileMap['createdAt']) as String,
+        (fileMap['created_at'] ?? fileMap['uploadedAt'] ?? fileMap['createdAt'])
+            as String,
       ),
     );
   }
@@ -149,14 +158,17 @@ class UploadResult {
       };
 
   /// Aspect ratio of the image (width / height), or `null` if dimensions are not available.
-  double? get aspectRatio =>
-      (width != null && height != null && height! > 0) ? width! / height! : null;
+  double? get aspectRatio => (width != null && height != null && height! > 0)
+      ? width! / height!
+      : null;
 
   /// HTML embed snippet for this file.
-  String get htmlEmbed => '<img src="$cdnUrl" alt="${filename.isNotEmpty ? filename : fileId}" />';
+  String get htmlEmbed =>
+      '<img src="$cdnUrl" alt="${filename.isNotEmpty ? filename : fileId}" />';
 
   /// Markdown embed snippet for this file.
-  String get markdownEmbed => '![${filename.isNotEmpty ? filename : fileId}]($cdnUrl)';
+  String get markdownEmbed =>
+      '![${filename.isNotEmpty ? filename : fileId}]($cdnUrl)';
 
   /// CSS url() snippet for this file.
   String get cssEmbed => "url('$cdnUrl')";

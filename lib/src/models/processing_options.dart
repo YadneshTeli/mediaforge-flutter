@@ -80,7 +80,8 @@ class ProcessingOptions {
     this.resizeHeight,
     this.resizeMode = ResizeMode.fit,
     this.maintainAspectRatio = true,
-  }) : assert(quality >= 1 && quality <= 100, 'Quality must be between 1 and 100');
+  }) : assert(quality >= 1 && quality <= 100,
+            'Quality must be between 1 and 100');
 
   /// Factory preset for maximum privacy and high quality.
   const ProcessingOptions.privacyFirst({

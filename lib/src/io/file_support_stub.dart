@@ -12,7 +12,8 @@ class FileSupport {
   static const bool isSupported = LocalFileSupport.isSupported;
 
   /// Maximum file size supported for on-device stripping operations (50 MB).
-  static const int maxStripFileSizeBytes = LocalFileSupport.maxStripFileSizeBytes;
+  static const int maxStripFileSizeBytes =
+      LocalFileSupport.maxStripFileSizeBytes;
 
   /// Emits [UnsupportedError] asynchronously through the returned Future on web platforms.
   static Future<ExifData> readMetadataFile(dynamic file) async {

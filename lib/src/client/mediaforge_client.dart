@@ -193,7 +193,8 @@ class MediaForgeClient {
     _ensureNotClosed();
     final uri = Uri.parse('$baseUrl/v1/developer/strip');
     _ensureWithinUploadLimit(bytes.lengthInBytes);
-    final actualFilename = filename ?? _inferFilename(bytes, defaultName: 'media');
+    final actualFilename =
+        filename ?? _inferFilename(bytes, defaultName: 'media');
 
     try {
       final mimeType = MimeType.fromBytes(bytes) ?? 'application/octet-stream';
@@ -257,7 +258,8 @@ class MediaForgeClient {
     Duration? timeout,
   }) async {
     _ensureWithinUploadLimit(bytes.lengthInBytes);
-    final actualFilename = filename ?? _inferFilename(bytes, defaultName: 'upload');
+    final actualFilename =
+        filename ?? _inferFilename(bytes, defaultName: 'upload');
     final mimeType = MimeType.fromBytes(bytes) ?? 'application/octet-stream';
 
     return _uploadMultipart(
@@ -427,12 +429,14 @@ class MediaForgeClient {
       timeout,
       onTimeout: () {
         cancellable.cancel(
-          TimeoutException('Request timed out after ${timeout.inSeconds}s', timeout),
+          TimeoutException(
+              'Request timed out after ${timeout.inSeconds}s', timeout),
         );
         if (_ownsClient) {
           clientToUse.close();
         }
-        throw TimeoutException('Request timed out after ${timeout.inSeconds}s', timeout);
+        throw TimeoutException(
+            'Request timed out after ${timeout.inSeconds}s', timeout);
       },
     );
   }
@@ -645,7 +649,8 @@ class MediaForgeClient {
     for (final req in _activeRequests.toList()) {
       try {
         req.cancel(
-          const NetworkException('MediaForgeClient was closed.', code: 'client_closed'),
+          const NetworkException('MediaForgeClient was closed.',
+              code: 'client_closed'),
         );
       } catch (_) {}
     }
@@ -678,7 +683,9 @@ class MediaForgeClient {
 
   static String _extensionOf(String filename) {
     final dot = filename.lastIndexOf('.');
-    return (dot >= 0 && dot < filename.length - 1) ? filename.substring(dot + 1) : '';
+    return (dot >= 0 && dot < filename.length - 1)
+        ? filename.substring(dot + 1)
+        : '';
   }
 
   static String _inferFilename(Uint8List bytes, {required String defaultName}) {
@@ -718,20 +725,29 @@ class MediaForgeClient {
   /// A safe, human-readable message for proxy/edge responses whose raw body
   /// must never reach end users (it may contain HTML and injected scripts).
   static String _edgeMessageFor(int statusCode) => switch (statusCode) {
-        400 => 'The MediaForge edge rejected the request as malformed (HTTP 400).',
-        401 => 'The request was not authorized by the MediaForge edge (HTTP 401).',
-        403 => 'The request was blocked by the MediaForge edge network (HTTP 403).',
+        400 =>
+          'The MediaForge edge rejected the request as malformed (HTTP 400).',
+        401 =>
+          'The request was not authorized by the MediaForge edge (HTTP 401).',
+        403 =>
+          'The request was blocked by the MediaForge edge network (HTTP 403).',
         404 => 'The requested MediaForge endpoint was not found (HTTP 404).',
-        408 => 'The MediaForge edge timed out waiting for the request (HTTP 408).',
+        408 =>
+          'The MediaForge edge timed out waiting for the request (HTTP 408).',
         413 => 'Payload exceeds the edge upload limit (HTTP 413). '
             'Compress or resize the file before uploading.',
         429 => 'Too many requests to the MediaForge edge (HTTP 429). '
             'Slow down and try again.',
-        500 => 'MediaForge edge gateway encountered an internal error (HTTP 500).',
-        502 => 'MediaForge edge gateway is temporarily unavailable (HTTP 502 Bad Gateway).',
-        503 => 'MediaForge service is temporarily unavailable (HTTP 503). Try again shortly.',
-        504 => 'MediaForge edge gateway timed out processing the payload (HTTP 504).',
-        _ => 'MediaForge API returned an unexpected response (HTTP $statusCode).',
+        500 =>
+          'MediaForge edge gateway encountered an internal error (HTTP 500).',
+        502 =>
+          'MediaForge edge gateway is temporarily unavailable (HTTP 502 Bad Gateway).',
+        503 =>
+          'MediaForge service is temporarily unavailable (HTTP 503). Try again shortly.',
+        504 =>
+          'MediaForge edge gateway timed out processing the payload (HTTP 504).',
+        _ =>
+          'MediaForge API returned an unexpected response (HTTP $statusCode).',
       };
 
   /// Collapses whitespace and truncates plain-text bodies for messages.
@@ -775,7 +791,8 @@ class MediaForgeClient {
     if (code == 403) {
       if (isEdgeMarkup) {
         // An HTML 403 comes from the edge/WAF, not from MediaForge plan checks.
-        throw NetworkException(message, statusCode: 403, code: 'edge_forbidden');
+        throw NetworkException(message,
+            statusCode: 403, code: 'edge_forbidden');
       }
       if (apiCode == 'bandwidth_exceeded') {
         throw PlanLimitException(

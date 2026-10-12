@@ -33,7 +33,8 @@ void main() {
       expect(data.hasCameraInfo, isTrue);
       expect(data.hasTimestamps, isTrue);
       expect(data.hasSensitiveData, isTrue);
-      expect(data.googleMapsUrl, equals('https://maps.google.com/?q=37.7749,-122.4194'));
+      expect(data.googleMapsUrl,
+          equals('https://maps.google.com/?q=37.7749,-122.4194'));
 
       final summary = data.toSummaryMap();
       expect(summary['Location'], equals('37.7749, -122.4194'));
@@ -105,8 +106,10 @@ void main() {
     });
 
     test('quality clamped validation', () {
-      expect(() => ProcessingOptions(quality: -5), throwsA(isA<AssertionError>()));
-      expect(() => ProcessingOptions(quality: 105), throwsA(isA<AssertionError>()));
+      expect(
+          () => ProcessingOptions(quality: -5), throwsA(isA<AssertionError>()));
+      expect(() => ProcessingOptions(quality: 105),
+          throwsA(isA<AssertionError>()));
     });
 
     test('copyWith can clear nullable fields when passing null', () {
@@ -179,10 +182,12 @@ void main() {
 
       final serialized = result.toJson();
       expect(serialized['file_id'], equals('file_123'));
-      expect(serialized['cdn_url'], equals('https://cdn.mediaforge.tech/img123.webp'));
+      expect(serialized['cdn_url'],
+          equals('https://cdn.mediaforge.tech/img123.webp'));
     });
 
-    test('fromJson safely parses doubles and missing values without crashing', () {
+    test('fromJson safely parses doubles and missing values without crashing',
+        () {
       final json = {
         'file_id': 'f_num_test',
         'cdn_url': 'https://cdn.mediaforge.tech/num_test.jpg',

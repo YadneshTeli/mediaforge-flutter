@@ -426,9 +426,7 @@ class MediaForge {
     UploadProgressCallback? onProgressEvent,
     Duration? timeout,
   }) async {
-    final processed = options != null
-        ? await process(bytes, options)
-        : bytes;
+    final processed = options != null ? await process(bytes, options) : bytes;
 
     return upload(
       processed,
@@ -593,8 +591,7 @@ class MediaForgeCloud {
       MediaForge.listFiles(page: page, limit: limit, cursor: cursor);
 
   /// Retrieves details for a specific uploaded asset.
-  Future<MediaForgeFile> getFile(String fileId) =>
-      MediaForge.getFile(fileId);
+  Future<MediaForgeFile> getFile(String fileId) => MediaForge.getFile(fileId);
 
   /// Deletes a file from Cloudflare R2 CDN.
   Future<void> deleteFile(String fileId) => MediaForge.deleteFile(fileId);
