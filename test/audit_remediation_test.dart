@@ -221,5 +221,27 @@ void main() {
 
       client.close();
     });
+
+    test('L5: Malformed JSON response on 200/201 throws typed upload_parse_error', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response('not valid json', 200);
+      });
+
+      final client = MediaForgeClient(
+        apiKey: 'mf_test_123',
+        httpClient: mockClient,
+      );
+
+      await expectLater(
+        client.uploadToCdn(Uint8List.fromList([1, 2, 3])),
+        throwsA(
+          isA<NetworkException>()
+              .having((e) => e.code, 'code', equals('upload_parse_error'))
+              .having((e) => e.statusCode, 'statusCode', equals(200)),
+        ),
+      );
+
+      client.close();
+    });
   });
 }

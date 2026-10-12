@@ -356,13 +356,21 @@ class MediaForgeClient {
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final fileMap = (data['file'] is Map<String, dynamic>)
-            ? data['file'] as Map<String, dynamic>
-            : data;
-        final file = MediaForgeFile.fromJson(fileMap);
-        reporter?.completed();
-        return file;
+        try {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          final fileMap = (data['file'] is Map<String, dynamic>)
+              ? data['file'] as Map<String, dynamic>
+              : data;
+          final file = MediaForgeFile.fromJson(fileMap);
+          reporter?.completed();
+          return file;
+        } catch (parseError) {
+          throw NetworkException(
+            'Upload succeeded on server (HTTP ${response.statusCode}), but response body could not be parsed: $parseError',
+            statusCode: response.statusCode,
+            code: 'upload_parse_error',
+          );
+        }
       }
 
       _handleErrorResponse(response);
